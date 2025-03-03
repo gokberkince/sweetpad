@@ -93,6 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
     buildManager: buildManager,
     toolsManager: toolsManager,
     testingManager: testingManager,
+    testPlansManager: testPlansManager
   });
   // Here is circular dependency, but I don't care
   buildManager.context = _context;
@@ -210,6 +211,7 @@ export function activate(context: vscode.ExtensionContext) {
   const testPlansTreeProvider = new TestPlansTreeProvider(testPlansManager);
   d(tree("sweetpad.testplan.view", testPlansTreeProvider));
   d(command("sweetpad.testplan.refreshView", async () => testPlansManager.refresh()));
+  d(command("sweetpad.testplan.select", async (context: CommandExecution, testPlan: TestPlan) => testPlansManager.setSelectedTestPlan(testPlan)));
   d(command("sweetpad.testplan.runTests", async (context: CommandExecution, item: { testPlan: any }) => runTestsCommand(context, item.testPlan)));
   d(command("sweetpad.testplan.runTestsWithoutBuilding", async (context: CommandExecution, item: { testPlan: any }) => runTestsWithoutBuildingCommand(context, item.testPlan)));
 }

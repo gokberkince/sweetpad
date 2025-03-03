@@ -7,6 +7,10 @@ import { type QuickPickItem, showQuickPick } from "../common/quick-pick";
 import type { DestinationPlatform } from "../destination/constants";
 import type { Destination } from "../destination/types";
 import { splitSupportedDestinatinos } from "../destination/utils";
+import * as path from "path";
+import { getWorkspacePath } from "../build/utils";
+import { askXcodeWorkspacePath } from "../build/utils";
+import type { TestPlan } from "../testplan/manager";
 
 /**
  * Ask user to select target to build
@@ -216,4 +220,48 @@ export async function askSchemeForTesting(
   const schemeName = scheme.context.scheme.name;
   context.buildManager.setDefaultSchemeForTesting(schemeName);
   return schemeName;
+}
+
+export async function askTestPlan(context: ExtensionContext): Promise<TestPlan | undefined> {
+  // First check if there's a test plan selected in the test plan view
+  const testPlansManager = context.testPlansManager;
+  if (!testPlansManager) {
+    return undefined;
+  }
+
+  // Get selected test plan if exists
+  const selectedTestPlan = testPlansManager.selectedTestPlan;
+  if (selectedTestPlan) {
+    return selectedTestPlan;
+  }
+
+  // If no test plan is selected, show quick pick with available test plans
+  const testPlans = testPlansManager.testPlans;
+  if (testPlans.length === 0) {
+    // Refresh test plans if none are loaded
+    await testPlansManager.refresh();
+  }
+
+  const items = testPlans.map(testPlan => ({
+    label: testPlan.name,
+    description: `${testPlan.type} - ${testPlan.configurations.length} configurations`,
+    testPlan
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select a test plan',
+    title: 'Select Test Plan'
+  });
+
+  if (!selected) {
+    // Default to LocalSmokeTests if no selection
+    return {
+      name: "LocalSmokeTests",
+      path: "",
+      type: "smoke",
+      configurations: []
+    };
+  }
+
+  return selected.testPlan;
 }

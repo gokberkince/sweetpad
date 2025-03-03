@@ -1,9 +1,10 @@
 import * as vscode from "vscode";
-import type { BuildManager } from "../build/manager";
-import type { DestinationsManager } from "../destination/manager";
+import type { BuildManager } from "../build/manager.js";
+import type { DestinationsManager } from "../destination/manager.js";
 import type { DestinationType, SelectedDestination } from "../destination/types";
-import type { TestingManager } from "../testing/manager";
-import type { ToolsManager } from "../tools/manager";
+import type { TestingManager } from "../testing/manager.js";
+import type { ToolsManager } from "../tools/manager.js";
+import type { TestPlansManager } from "../testplan/manager.js";
 import { addTreeProviderErrorReporting, errorReporting } from "./error-reporting";
 import { type ErrorMessageAction, ExtensionError, TaskError } from "./errors";
 import { commonLogger } from "./logger";
@@ -56,6 +57,7 @@ export class ExtensionContext {
   public toolsManager: ToolsManager;
   public buildManager: BuildManager;
   public testingManager: TestingManager;
+  public testPlansManager?: TestPlansManager;
   private _sessionState: Map<SessionStateKey, unknown> = new Map();
 
   constructor(options: {
@@ -64,12 +66,14 @@ export class ExtensionContext {
     buildManager: BuildManager;
     toolsManager: ToolsManager;
     testingManager: TestingManager;
+    testPlansManager?: TestPlansManager;
   }) {
     this._context = options.context;
     this.destinationsManager = options.destinationsManager;
     this.buildManager = options.buildManager;
     this.toolsManager = options.toolsManager;
     this.testingManager = options.testingManager;
+    this.testPlansManager = options.testPlansManager;
   }
 
   get storageUri() {

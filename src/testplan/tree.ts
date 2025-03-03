@@ -28,15 +28,17 @@ class TestPlanTypeItem extends vscode.TreeItem {
 class TestPlanItem extends vscode.TreeItem {
   constructor(
     public readonly testPlan: TestPlan,
-    public readonly collapsibleState: vscode.TreeItemCollapsibleState
+    public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+    private readonly isSelected: boolean
   ) {
     super(testPlan.name, collapsibleState);
     this.contextValue = "testPlan";
-    this.iconPath = new vscode.ThemeIcon("file-text");
+    this.iconPath = new vscode.ThemeIcon(isSelected ? "check" : "file-text");
+    this.description = isSelected ? "(selected)" : undefined;
     this.command = {
-      command: "sweetpad.testplan.runTests",
-      title: "Run Tests",
-      arguments: [this]
+      command: "sweetpad.testplan.select",
+      title: "Select Test Plan",
+      arguments: [testPlan]
     };
   }
 }
@@ -47,6 +49,9 @@ export class TestPlansTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   constructor(private manager: TestPlansManager) {
     this.manager.on("testPlansChanged", () => {
+      this._onDidChangeTreeData.fire();
+    });
+    this.manager.on("selectedTestPlanChanged", () => {
       this._onDidChangeTreeData.fire();
     });
   }
@@ -66,9 +71,14 @@ export class TestPlansTreeProvider implements vscode.TreeDataProvider<vscode.Tre
     }
 
     if (element instanceof TestPlanTypeItem) {
+      const selectedTestPlan = this.manager.selectedTestPlan;
       return this.manager.testPlans
         .filter(plan => plan.type === element.type)
-        .map(plan => new TestPlanItem(plan, vscode.TreeItemCollapsibleState.None));
+        .map(plan => new TestPlanItem(
+          plan, 
+          vscode.TreeItemCollapsibleState.None,
+          selectedTestPlan?.path === plan.path
+        ));
     }
 
     return [];

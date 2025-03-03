@@ -26,6 +26,7 @@ export type TestPlan = {
 export class TestPlansManager extends EventEmitter {
   private _context?: ExtensionContext;
   private _testPlans: TestPlan[] = [];
+  private _selectedTestPlan?: TestPlan;
 
   constructor() {
     super();
@@ -39,12 +40,25 @@ export class TestPlansManager extends EventEmitter {
     return this._testPlans;
   }
 
+  get selectedTestPlan(): TestPlan | undefined {
+    return this._selectedTestPlan;
+  }
+
   private getTestPlanType(folderPath: string): TestPlanType {
     if (folderPath.includes("SmokeTestPlans")) return "smoke";
     if (folderPath.includes("RegressionTestPlans")) return "regression";
     if (folderPath.includes("SnapshotTestPlans")) return "snapshot";
     if (folderPath.includes("UnitTestPlans")) return "unit";
     return "unit"; // default
+  }
+
+  setSelectedTestPlan(testPlan: TestPlan | undefined) {
+    this._selectedTestPlan = testPlan;
+    this.emit("selectedTestPlanChanged", testPlan);
+  }
+
+  getSelectedTestPlan(): TestPlan | undefined {
+    return this._selectedTestPlan;
   }
 
   async refresh() {
@@ -80,6 +94,12 @@ export class TestPlansManager extends EventEmitter {
     }
 
     this._testPlans = testPlans;
+    
+    // If the previously selected test plan is no longer available, clear it
+    if (this._selectedTestPlan && !testPlans.find(tp => tp.path === this._selectedTestPlan?.path)) {
+      this.setSelectedTestPlan(undefined);
+    }
+    
     this.emit("testPlansChanged");
   }
 
@@ -88,7 +108,7 @@ export class TestPlansManager extends EventEmitter {
     
     const args = [
       "test-without-building",
-      "-xctestrun", testPlan.path
+      "-testPlan", testPlan.name
     ];
 
     if (configuration) {

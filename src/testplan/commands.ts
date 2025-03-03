@@ -39,6 +39,35 @@ function getTestPlanName(testPlanPath: string): string {
   return basename.replace('.xctestplan', '');
 }
 
+async function selectTestConfiguration(configurations: TestPlan['configurations']): Promise<{ configuration?: { name: string }, isAllRegions: boolean }> {
+  // Add "All Regions" option at the top
+  const configItems = [
+    {
+      label: "All Regions",
+      description: "Run tests for all regions",
+      configuration: undefined
+    },
+    ...configurations.map(config => ({
+      label: config.name,
+      description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+      configuration: config
+    }))
+  ];
+
+  const selectedConfig = await vscode.window.showQuickPick(configItems, {
+    placeHolder: "Select a configuration or All Regions"
+  });
+
+  if (!selectedConfig) {
+    return { isAllRegions: false };
+  }
+
+  return {
+    configuration: selectedConfig.configuration,
+    isAllRegions: !selectedConfig.configuration
+  };
+}
+
 export async function runTestsCommand(context: CommandExecution, testPlan: TestPlan) {
   const { xcworkspace, scheme, configuration, destinationRaw } = await getTestingParameters(context);
   const configurations = testPlan.configurations;
@@ -66,17 +95,22 @@ export async function runTestsCommand(context: CommandExecution, testPlan: TestP
     return;
   }
 
-  const configItems = configurations.map(config => ({
-    label: config.name,
-    description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
-    configuration: config
-  }));
+  const { configuration: selectedConfig, isAllRegions } = await selectTestConfiguration(configurations);
 
-  const selectedConfig = await vscode.window.showQuickPick(configItems, {
-    placeHolder: "Select a configuration to run tests with"
-  });
+  if (!selectedConfig && !isAllRegions) return;
 
-  if (!selectedConfig) return;
+  const args = [
+    "test",
+    "-workspace", xcworkspace,
+    "-scheme", scheme,
+    "-configuration", configuration,
+    "-destination", destinationRaw,
+    "-testPlan", testPlanName
+  ];
+
+  if (!isAllRegions && selectedConfig) {
+    args.push("-only-test-configuration", selectedConfig.name);
+  }
 
   await runTask(context.context, {
     name: "Run Tests",
@@ -85,15 +119,7 @@ export async function runTestsCommand(context: CommandExecution, testPlan: TestP
     callback: async (terminal) => {
       await terminal.execute({
         command: "xcodebuild",
-        args: [
-          "test",
-          "-workspace", xcworkspace,
-          "-scheme", scheme,
-          "-configuration", configuration,
-          "-destination", destinationRaw,
-          "-testPlan", testPlanName,
-          "-only-test-configuration", selectedConfig.configuration.name
-        ]
+        args
       });
     }
   });
@@ -126,17 +152,22 @@ export async function runTestsWithoutBuildingCommand(context: CommandExecution, 
     return;
   }
 
-  const configItems = configurations.map(config => ({
-    label: config.name,
-    description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
-    configuration: config
-  }));
+  const { configuration: selectedConfig, isAllRegions } = await selectTestConfiguration(configurations);
 
-  const selectedConfig = await vscode.window.showQuickPick(configItems, {
-    placeHolder: "Select a configuration to run tests with"
-  });
+  if (!selectedConfig && !isAllRegions) return;
 
-  if (!selectedConfig) return;
+  const args = [
+    "test-without-building",
+    "-workspace", xcworkspace,
+    "-scheme", scheme,
+    "-configuration", configuration,
+    "-destination", destinationRaw,
+    "-testPlan", testPlanName
+  ];
+
+  if (!isAllRegions && selectedConfig) {
+    args.push("-only-test-configuration", selectedConfig.name);
+  }
 
   await runTask(context.context, {
     name: "Run Tests Without Building",
@@ -145,15 +176,7 @@ export async function runTestsWithoutBuildingCommand(context: CommandExecution, 
     callback: async (terminal) => {
       await terminal.execute({
         command: "xcodebuild",
-        args: [
-          "test-without-building",
-          "-workspace", xcworkspace,
-          "-scheme", scheme,
-          "-configuration", configuration,
-          "-destination", destinationRaw,
-          "-testPlan", testPlanName,
-          "-only-test-configuration", selectedConfig.configuration.name
-        ]
+        args
       });
     }
   });

@@ -10,7 +10,7 @@ import { isFileExists } from "../common/files.js";
 import { commonLogger } from "../common/logger.js";
 import { runTask } from "../common/tasks.js";
 import type { Destination } from "../destination/types.js";
-import { askConfigurationForTesting, askDestinationToTestOn, askSchemeForTesting, askTestingTarget } from "./utils.js";
+import { askConfigurationForTesting, askDestinationToTestOn, askSchemeForTesting, askTestingTarget, askTestPlan } from "./utils.js";
 
 type TestingInlineError = {
   fileName: string;
@@ -76,6 +76,14 @@ class XcodebuildTestRunContext {
 
     // Some tests are still unprocessed
     return "skipped";
+  }
+
+  getTestIds(): string[] {
+    return Array.from(this.methodTests.keys());
+  }
+
+  findTestIdByMethodName(methodName: string): string | undefined {
+    return this.getTestIds().find(id => id.endsWith(`.${methodName}`));
   }
 }
 
@@ -167,16 +175,19 @@ export class TestingManager {
   constructor() {
     this.workspacePath = getWorkspacePath();
 
-    this.controller = vscode.tests.createTestController("sweetpad", "SweetPad");
+    this.controller = vscode.tests.createTestController("uitests", "Trendyol");
 
-    // Register event listeners for updating test items when documents change or open
-    vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
-    vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
+    // // Register event listeners for updating test items when documents change or open
+    // vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
+    // vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
 
-    // Initialize test items for already open documents
-    for (const document of vscode.workspace.textDocuments) {
-      this.updateTestItems(document);
-    }
+    // // Initialize test items for already open documents
+    // for (const document of vscode.workspace.textDocuments) {
+    //   this.updateTestItems(document);
+    // }
+
+    // Discover UI tests in UITests folder
+    void this.discoverUITests();
 
     // Default for profile that is slow due to build step, but should work in most cases
     this.createRunProfile({
@@ -190,9 +201,137 @@ export class TestingManager {
     this.createRunProfile({
       name: "Run Tests Without Building",
       kind: vscode.TestRunProfileKind.Run,
-      isDefault: false,
       run: (request, token) => this.runTestsWithoutBuilding(request, token),
     });
+  }
+
+  private async discoverUITests() {
+    const uiTestsPath = path.join(this.workspacePath, 'UITests');
+    const testFiles = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(uiTestsPath, '**/*.swift')
+    );
+
+    // Create domain groups
+    const domainGroups = new Map<string, vscode.TestItem>();
+    const testTypeGroups = new Map<string, Map<string, vscode.TestItem>>();
+
+    // Clear existing items before starting discovery
+    this.controller.items.replace([]);
+
+    // Process each test file
+    for (const file of testFiles) {
+      const relativePath = path.relative(uiTestsPath, file.fsPath);
+      const parts = relativePath.split(path.sep);
+      
+      // Skip if not in the expected structure
+      if (parts.length < 3) continue;
+
+      const [domain, testType] = parts;
+
+      // Create domain group if it doesn't exist
+      if (!domainGroups.has(domain)) {
+        const domainItem = this.controller.createTestItem(
+          domain,
+          domain,
+          vscode.Uri.file(path.join(uiTestsPath, domain))
+        );
+        domainGroups.set(domain, domainItem);
+        
+        // Initialize test type map for this domain
+        testTypeGroups.set(domain, new Map());
+      }
+
+      // Get the test types map for this domain
+      const domainTestTypes = testTypeGroups.get(domain)!;
+
+      // Create test type group if it doesn't exist
+      if (!domainTestTypes.has(testType)) {
+        const testTypeItem = this.controller.createTestItem(
+          `${domain}:${testType}`,
+          testType,
+          vscode.Uri.file(path.join(uiTestsPath, domain, testType))
+        );
+        domainTestTypes.set(testType, testTypeItem);
+        
+        // Add test type group to domain group
+        const domainGroup = domainGroups.get(domain)!;
+        const existingDomainChildren = domainGroup.children ? Array.from(domainGroup.children).map(([_, item]) => item) : [];
+        if (!existingDomainChildren.some(child => child.id === testTypeItem.id)) {
+          domainGroup.children?.replace([...existingDomainChildren, testTypeItem]);
+        }
+      }
+
+      // Parse the test file content
+      const document = await vscode.workspace.openTextDocument(file);
+      const text = document.getText();
+
+      // Regex to find classes inheriting from BaseTest or multiple inheritance including BaseTest
+      const classRegex = /class\s+(\w+)\s*:\s*([^{]+)/g;
+      while (true) {
+        const classMatch = classRegex.exec(text);
+        if (classMatch === null) {
+          break;
+        }
+
+        const className = classMatch[1];
+        const inheritanceList = classMatch[2].split(',').map(s => s.trim());
+        
+        // Check if the class inherits from BaseTest
+        if (!inheritanceList.some(base => base === 'BaseTest')) {
+          continue;
+        }
+
+        const classStartIndex = classMatch.index + classMatch[0].length;
+        const classPosition = document.positionAt(classMatch.index);
+
+        const classTestItem = this.controller.createTestItem(
+          `${domain}:${testType}:${className}`,
+          className,
+          document.uri
+        );
+        classTestItem.range = new vscode.Range(classPosition, classPosition);
+        this.testItems.set(classTestItem, { type: 'class' });
+
+        const classCode = extractCodeBlock(text, classStartIndex - 1); // Start from '{'
+
+        if (classCode === null) {
+          continue; // Could not find class code block
+        }
+
+        // Find all test methods within the class
+        const funcRegex = /func\s+(test\w+)\s*\(/g;
+
+        while (true) {
+          const funcMatch = funcRegex.exec(classCode);
+          if (funcMatch === null) {
+            break;
+          }
+          const testName = funcMatch[1];
+          const testStartIndex = classStartIndex + funcMatch.index;
+          const position = document.positionAt(testStartIndex);
+
+          const testItem = this.controller.createTestItem(
+            `${domain}:${testType}:${className}.${testName}`,
+            testName,
+            document.uri
+          );
+
+          testItem.range = new vscode.Range(position, position);
+          this.testItems.set(testItem, { type: 'method' });
+          classTestItem.children?.add(testItem);
+        }
+
+        // Add test class to test type group
+        const testTypeGroup = domainTestTypes.get(testType)!;
+        const existingTests = testTypeGroup.children ? Array.from(testTypeGroup.children).map(([_, item]) => item) : [];
+        if (!existingTests.some(test => test.id === classTestItem.id)) {
+          testTypeGroup.children?.replace([...existingTests, classTestItem]);
+        }
+      }
+    }
+
+    // Add all domain groups to the test controller
+    this.controller.items.replace([...domainGroups.values()]);
   }
 
   /**
@@ -269,29 +408,36 @@ export class TestingManager {
    * TODO: use a proper Swift parser to find test methods
    */
   updateTestItems(document: vscode.TextDocument) {
-    // Remove existing test items for this document
-    for (const testItem of this.controller.items) {
-      if (testItem[1].uri?.toString() === document.uri.toString()) {
-        this.controller.items.delete(testItem[0]);
-      }
+    // Skip non-swift files
+    if (!document.uri.path.endsWith(".swift")) {
+      return;
     }
 
-    // Check if this is a Swift file
-    if (!document.fileName.endsWith(".swift")) {
-      return;
+    // Remove existing test items for this document
+    for (const [id, testItem] of this.controller.items) {
+      if (testItem.uri?.toString() === document.uri.toString()) {
+        this.controller.items.delete(id);
+      }
     }
 
     const text = document.getText();
 
-    // Regex to find classes inheriting from XCTestCase
-    const classRegex = /class\s+(\w+)\s*:\s*XCTestCase\s*\{/g;
-    // let classMatch;
+    // Regex to find classes inheriting from BaseTest or multiple inheritance including BaseTest
+    const classRegex = /class\s+(\w+)\s*:\s*([^{]+)/g;
     while (true) {
       const classMatch = classRegex.exec(text);
       if (classMatch === null) {
         break;
       }
+
       const className = classMatch[1];
+      const inheritanceList = classMatch[2].split(',').map(s => s.trim());
+      
+      // Check if the class inherits from BaseTest
+      if (!inheritanceList.some(base => base === 'BaseTest')) {
+        continue;
+      }
+
       const classStartIndex = classMatch.index + classMatch[0].length;
       const classPosition = document.positionAt(classMatch.index);
 
@@ -330,7 +476,7 @@ export class TestingManager {
         });
 
         testItem.range = new vscode.Range(position, position);
-        classTestItem.children.add(testItem);
+        classTestItem.children?.add(testItem);
       }
     }
   }
@@ -462,12 +608,12 @@ export class TestingManager {
     const methodStatusMatchIOS = line.match(this.METHOD_STATUS_REGEXP_IOS);
     if (methodStatusMatchIOS) {
       const [, , methodName, status] = methodStatusMatchIOS;
-      const methodTestId = `${className}.${methodName}`;
+      // Find the full test ID by searching through the available method tests
+      const methodTestId = runContext.findTestIdByMethodName(methodName);
+      if (!methodTestId) return;
 
       const methodTest = runContext.getMethodTest(methodTestId);
-      if (!methodTest) {
-        return;
-      }
+      if (!methodTest) return;
 
       if (status.startsWith("started")) {
         testRun.started(methodTest);
@@ -489,12 +635,12 @@ export class TestingManager {
     const methodStatusMatchMacOS = line.match(this.METHOD_STATUS_REGEXP_MACOS);
     if (methodStatusMatchMacOS) {
       const [, , methodName, status] = methodStatusMatchMacOS;
-      const methodTestId = `${className}.${methodName}`;
+      // Find the full test ID by searching through the available method tests
+      const methodTestId = runContext.findTestIdByMethodName(methodName);
+      if (!methodTestId) return;
 
       const methodTest = runContext.getMethodTest(methodTestId);
-      if (!methodTest) {
-        return;
-      }
+      if (!methodTest) return;
 
       if (status.startsWith("started")) {
         testRun.started(methodTest);
@@ -516,7 +662,10 @@ export class TestingManager {
     const inlineErrorMatch = line.match(this.INLINE_ERROR_REGEXP);
     if (inlineErrorMatch) {
       const [, filePath, lineNumber, methodName, errorMessage] = inlineErrorMatch;
-      const testId = `${className}.${methodName}`;
+      // Find the full test ID by searching through the available method tests
+      const testId = runContext.findTestIdByMethodName(methodName);
+      if (!testId) return;
+
       runContext.addInlineError(testId, {
         fileName: filePath,
         lineNumber: Number.parseInt(lineNumber, 10),
@@ -747,60 +896,132 @@ export class TestingManager {
    * Build the project and run the selected tests
    */
   async buildAndRunTests(request: vscode.TestRunRequest, token: vscode.CancellationToken) {
-    const run = this.controller.createTestRun(request);
-    try {
-      const { scheme, destination, xcworkspace } = await this.askTestingConfigurations();
+    const { xcworkspace, scheme, configuration, destination } = await this.askTestingConfigurations();
 
-      // before testing we need to build the project to avoid runnning tests on old code or
-      // building every time we run selected tests
-      await this.buildForTesting({
-        scheme: scheme,
-        destination: destination,
-        xcworkspace: xcworkspace,
-      });
-
-      await this.runTests({
-        run: run,
-        request: request,
-        xcworkspace: xcworkspace,
-        destination: destination,
-        scheme: scheme,
-        token: token,
-      });
-    } finally {
-      run.end();
+    // Ask for test plan
+    const testPlan = await askTestPlan(this.context);
+    if (!testPlan) {
+      return;
     }
+
+    const destinationRaw = getXcodeBuildDestinationString({ destination });
+
+    // Build for testing first
+    await this.buildForTesting({
+      destination,
+      scheme,
+      xcworkspace,
+    });
+
+    // Run tests
+    const run = this.controller.createTestRun(request);
+    const queue = this.prepareQueueForRun(request);
+
+    // Run each test
+    for (const test of queue) {
+      const testContext = this.testItems.get(test);
+      if (!testContext) {
+        continue;
+      }
+
+      if (testContext.type === "method") {
+        await this.runMethodTest({
+          run,
+          methodTest: test,
+          xcworkspace,
+          scheme,
+          destination,
+          defaultTarget: null,
+        });
+      } else if (testContext.type === "class") {
+        await this.runClassTest({
+          run,
+          classTest: test,
+          xcworkspace,
+          scheme,
+          destination,
+          defaultTarget: null,
+        });
+      }
+    }
+
+    run.end();
   }
 
-  async runClassTest(options: {
+  private getTestTarget(testId: string): string {
+    // Extract domain and test type from the test ID
+    // e.g., "DolapLite:RegressionTests:ClassName.methodName" -> "DolapLiteRegressionTests"
+    const parts = testId.split(':');
+    if (parts.length >= 2) {
+      return `${parts[0]}${parts[1]}`;
+    }
+    return '';
+  }
+
+  async runMethodTest(options: {
     run: vscode.TestRun;
-    classTest: vscode.TestItem;
-    scheme: string;
+    methodTest: vscode.TestItem;
     xcworkspace: string;
+    scheme: string;
     destination: Destination;
     defaultTarget: string | null;
   }): Promise<void> {
-    const { run, classTest, scheme, defaultTarget } = options;
-    const className = classTest.id;
+    const { run, methodTest, xcworkspace, scheme, destination } = options;
 
-    const runContext = new XcodebuildTestRunContext({
-      methodTests: [...classTest.children],
-    });
+    // Extract class name and method name from the test ID
+    const parts = methodTest.id.split(':');
+    const [domain, testType, classAndMethod] = parts;
+    const [className, methodName] = classAndMethod.split('.');
+    const testTarget = this.getTestTarget(methodTest.id);
 
-    const destinationRaw = getXcodeBuildDestinationString({ destination: options.destination });
-
-    // Some test items like SPM packages have a separate target for tests, in other case we use
-    // the same target for all selected tests
-    const testTarget = this.testItems.get(classTest)?.spmTarget ?? defaultTarget;
-    if (!testTarget) {
-      throw new Error("Test target is not defined");
+    // Ask for test plan
+    const testPlan = await askTestPlan(this.context);
+    if (!testPlan) {
+      run.skipped(methodTest);
+      return;
     }
 
-    run.started(classTest);
+    // Get test plan configurations if available
+    let configurationArg: string[] = [];
+    if (testPlan.configurations && testPlan.configurations.length > 0) {
+      const configItems = [
+        {
+          label: "All Regions",
+          description: "Run tests for all regions",
+          configuration: undefined
+        },
+        ...testPlan.configurations.map(config => ({
+          label: config.name,
+          description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+          configuration: config
+        }))
+      ];
+
+      const selectedConfig = await vscode.window.showQuickPick(configItems, {
+        placeHolder: "Select a configuration or All Regions"
+      });
+
+      if (!selectedConfig) {
+        run.skipped(methodTest);
+        return;
+      }
+
+      if (selectedConfig.configuration) {
+        configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+      }
+    }
+
+    const destinationRaw = getXcodeBuildDestinationString({ destination });
+
+    const runContext = new XcodebuildTestRunContext({
+      methodTests: [[methodTest.id, methodTest]],
+    });
+
+    run.started(methodTest);
 
     try {
       await runTask(this.context, {
-        name: "sweetpad.build.test",
+        name: "sweetpad.testing.runTest",
         lock: "sweetpad.build",
         terminateLocked: true,
         callback: async (terminal) => {
@@ -808,13 +1029,117 @@ export class TestingManager {
             command: "xcodebuild",
             args: [
               "test-without-building",
-              "-workspace",
-              options.xcworkspace,
-              "-destination",
-              destinationRaw,
-              "-scheme",
-              scheme,
-              `-only-testing:${testTarget}/${classTest.id}`,
+              "-workspace", xcworkspace,
+              "-scheme", scheme,
+              "-destination", destinationRaw,
+              "-testPlan", testPlan.name,
+              "-only-testing", `${testTarget}/${className}/${methodName}`,
+              ...configurationArg
+            ],
+            onOutputLine: async (output) => {
+              await this.parseOutputLine({
+                line: output.value,
+                testRun: run,
+                className: className,
+                runContext: runContext,
+              });
+            },
+          });
+        },
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Test failed";
+      run.failed(methodTest, new vscode.TestMessage(errorMessage));
+    } finally {
+      if (!runContext.isMethodTestProcessed(methodTest.id)) {
+        run.skipped(methodTest);
+      }
+    }
+  }
+
+  async runClassTest(options: {
+    run: vscode.TestRun;
+    classTest: vscode.TestItem;
+    xcworkspace: string;
+    scheme: string;
+    destination: Destination;
+    defaultTarget: string | null;
+  }): Promise<void> {
+    const { run, classTest, xcworkspace, scheme, destination } = options;
+
+    // Extract class name from the test ID
+    const parts = classTest.id.split(':');
+    const [domain, testType, className] = parts;
+    const testTarget = this.getTestTarget(classTest.id);
+
+    // Ask for test plan
+    const testPlan = await askTestPlan(this.context);
+    if (!testPlan) {
+      run.skipped(classTest);
+      return;
+    }
+
+    // Get test plan configurations if available
+    let configurationArg: string[] = [];
+    if (testPlan.configurations && testPlan.configurations.length > 0) {
+      const configItems = [
+        {
+          label: "All Regions",
+          description: "Run tests for all regions",
+          configuration: undefined
+        },
+        ...testPlan.configurations.map(config => ({
+          label: config.name,
+          description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+          configuration: config
+        }))
+      ];
+
+      const selectedConfig = await vscode.window.showQuickPick(configItems, {
+        placeHolder: "Select a configuration or All Regions"
+      });
+
+      if (!selectedConfig) {
+        run.skipped(classTest);
+        return;
+      }
+
+      if (selectedConfig.configuration) {
+        configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+      }
+    }
+
+    const destinationRaw = getXcodeBuildDestinationString({ destination });
+
+    const methodTests = new Map<string, vscode.TestItem>();
+    if (classTest.children) {
+      for (const [id, test] of classTest.children) {
+        methodTests.set(id, test);
+      }
+    }
+
+    const runContext = new XcodebuildTestRunContext({
+      methodTests,
+    });
+
+    run.started(classTest);
+
+    try {
+      await runTask(this.context, {
+        name: "sweetpad.testing.runTest",
+        lock: "sweetpad.build",
+        terminateLocked: true,
+        callback: async (terminal) => {
+          await terminal.execute({
+            command: "xcodebuild",
+            args: [
+              "test-without-building",
+              "-workspace", xcworkspace,
+              "-scheme", scheme,
+              "-destination", destinationRaw,
+              "-testPlan", testPlan.name,
+              "-only-testing", `${testTarget}/${className}`,
+              ...configurationArg
             ],
             onOutputLine: async (output) => {
               await this.parseOutputLine({
@@ -853,71 +1178,5 @@ export class TestingManager {
         run.skipped(classTest);
       }
     }
-  }
-
-  async runMethodTest(options: {
-    run: vscode.TestRun;
-    methodTest: vscode.TestItem;
-    xcworkspace: string;
-    scheme: string;
-    destination: Destination;
-    defaultTarget: string | null;
-  }): Promise<void> {
-    const { run: testRun, methodTest, scheme, defaultTarget } = options;
-    const [className, methodName] = methodTest.id.split(".");
-
-    const runContext = new XcodebuildTestRunContext({
-      methodTests: [[methodTest.id, methodTest]],
-    });
-
-    // Some test items like SPM packages have a separate target for tests, in other case we use
-    // the same target for all selected tests
-    const testTarget = this.testItems.get(methodTest)?.spmTarget ?? defaultTarget;
-
-    if (!testTarget) {
-      throw new Error("Test target is not defined");
-    }
-
-    const destinationRaw = getXcodeBuildDestinationString({ destination: options.destination });
-
-    // Run "xcodebuild" command as a task to see the test output
-    await runTask(this.context, {
-      name: "sweetpad.build.test",
-      lock: "sweetpad.build",
-      terminateLocked: true,
-      callback: async (terminal) => {
-        try {
-          await terminal.execute({
-            command: "xcodebuild",
-            args: [
-              "test-without-building",
-              "-workspace",
-              options.xcworkspace,
-              "-destination",
-              destinationRaw,
-              "-scheme",
-              scheme,
-              `-only-testing:${testTarget}/${className}/${methodName}`,
-            ],
-            onOutputLine: async (output) => {
-              await this.parseOutputLine({
-                line: output.value,
-                testRun: testRun,
-                className: className,
-                runContext: runContext,
-              });
-            },
-          });
-        } catch (error) {
-          // todo: ??? can we extract error message from error object?
-          const errorMessage = error instanceof Error ? error.message : "Test failed";
-          testRun.failed(methodTest, new vscode.TestMessage(errorMessage));
-        } finally {
-          if (!runContext.isMethodTestProcessed(methodTest.id)) {
-            testRun.skipped(methodTest);
-          }
-        }
-      },
-    });
   }
 }

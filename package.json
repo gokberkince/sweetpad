@@ -525,7 +525,7 @@
       {
         "command": "sweetpad.testplan.runTestsWithoutBuilding",
         "title": "SweetPad.TestPlan: Run tests without building",
-        "icon": "$(run)"
+        "icon": "$(repo-sync)"
       }
     ],
     "menus": {
