@@ -275,6 +275,11 @@
           "id": "sweetpad.tools.view",
           "name": "Tools",
           "visibility": "collapsed"
+        },
+        {
+          "id": "sweetpad.testplan.view",
+          "name": "TestPlans",
+          "icon": "$(testing)"
         }
       ]
     },
@@ -506,6 +511,21 @@
         "command": "sweetpad.destinations.selectForTesting",
         "title": "SweetPad.Testing: Select destination for testing",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "sweetpad.testplan.refreshView",
+        "title": "SweetPad.TestPlan: Refresh test plans",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sweetpad.testplan.runTests",
+        "title": "SweetPad.TestPlan: Run tests",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sweetpad.testplan.runTestsWithoutBuilding",
+        "title": "SweetPad.TestPlan: Run tests without building",
+        "icon": "$(run)"
       }
     ],
     "menus": {
@@ -524,6 +544,11 @@
         {
           "command": "sweetpad.tools.refresh",
           "when": "view == sweetpad.tools.view",
+          "group": "navigation"
+        },
+        {
+          "command": "sweetpad.testplan.refreshView",
+          "when": "view == sweetpad.testplan.view",
           "group": "navigation"
         }
       ],
@@ -621,6 +646,16 @@
           "command": "sweetpad.tools.install",
           "when": "view == sweetpad.tools.view && viewItem == notInstalled",
           "group": "inline@2"
+        },
+        {
+          "command": "sweetpad.testplan.runTests",
+          "when": "view == sweetpad.testplan.view && viewItem == testPlan",
+          "group": "inline"
+        },
+        {
+          "command": "sweetpad.testplan.runTestsWithoutBuilding",
+          "when": "view == sweetpad.testplan.view && viewItem == testPlan",
+          "group": "inline"
         }
       ],
       "testing/item/context": [

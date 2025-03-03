@@ -18,7 +18,7 @@ import { BuildManager } from "./build/manager.js";
 import { XcodeBuildTaskProvider } from "./build/provider.js";
 import { DefaultSchemeStatusBar } from "./build/status-bar.js";
 import { BuildTreeProvider } from "./build/tree.js";
-import { ExtensionContext } from "./common/commands.js";
+import { ExtensionContext, CommandExecution } from "./common/commands.js";
 import { errorReporting } from "./common/error-reporting.js";
 import { Logger } from "./common/logger.js";
 import { getAppPathCommand } from "./debugger/commands.js";
@@ -59,6 +59,9 @@ import { tuistCleanCommand, tuistEditComnmand, tuistGenerateCommand, tuistInstal
 import { createTuistWatcher } from "./tuist/watcher.js";
 import { xcodgenGenerateCommand } from "./xcodegen/commands.js";
 import { createXcodeGenWatcher } from "./xcodegen/watcher.js";
+import { TestPlansManager } from "./testplan/manager.js";
+import { TestPlansTreeProvider } from "./testplan/tree.js";
+import { runTestsCommand, runTestsWithoutBuildingCommand } from "./testplan/commands.js";
 
 export function activate(context: vscode.ExtensionContext) {
   // Sentry 🚨
@@ -81,6 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   const toolsManager = new ToolsManager();
   const testingManager = new TestingManager();
+  const testPlansManager = new TestPlansManager();
 
   // Main context object 🌍
   const _context = new ExtensionContext({
@@ -95,6 +99,10 @@ export function activate(context: vscode.ExtensionContext) {
   devicesManager.context = _context;
   destinationsManager.context = _context;
   testingManager.context = _context;
+  testPlansManager.context = _context;
+
+  // Initial refresh of testplans
+  void testPlansManager.refresh();
 
   // Trees 🎄
   const buildTreeProvider = new BuildTreeProvider({
@@ -197,6 +205,13 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.system.createIssue.generic", createIssueGenericCommand));
   d(command("sweetpad.system.createIssue.noSchemes", createIssueNoSchemesCommand));
   d(command("sweetpad.system.testErrorReporting", testErrorReportingCommand));
+
+  // TestPlans
+  const testPlansTreeProvider = new TestPlansTreeProvider(testPlansManager);
+  d(tree("sweetpad.testplan.view", testPlansTreeProvider));
+  d(command("sweetpad.testplan.refreshView", async () => testPlansManager.refresh()));
+  d(command("sweetpad.testplan.runTests", async (context: CommandExecution, item: { testPlan: any }) => runTestsCommand(context, item.testPlan)));
+  d(command("sweetpad.testplan.runTestsWithoutBuilding", async (context: CommandExecution, item: { testPlan: any }) => runTestsWithoutBuildingCommand(context, item.testPlan)));
 }
 
 export function deactivate() {}

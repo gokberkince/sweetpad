@@ -386,10 +386,14 @@ export async function getIsTuistInstalled() {
   }
 }
 
-export async function tuistGenerate() {
+export async function tuistGenerate(noBinaryCache: boolean = false) {
+  const args = ["generate", "--no-open"];
+  if (noBinaryCache) {
+    args.push("--no-binary-cache");
+  }
   return await exec({
     command: "tuist",
-    args: ["generate", "--no-open"],
+    args: args,
   });
 }
 

@@ -13,7 +13,16 @@ async function tuistCheckInstalled() {
 export async function tuistGenerateCommand() {
   await tuistCheckInstalled();
 
-  const raw = await tuistGenerate();
+  const options = await vscode.window.showQuickPick([
+    { label: "Generate with binary cache", value: false },
+    { label: "Generate without binary cache", value: true }
+  ], {
+    placeHolder: "Select generation option"
+  });
+
+  if (!options) return;
+
+  const raw = await tuistGenerate(options.value);
   if (raw.includes("tuist install")) {
     vscode.window.showErrorMessage(`Please run "tuist install" first`);
     return;
