@@ -873,11 +873,17 @@ export class TestingManager {
    * This is faster but you may need to build manually before running tests
    */
   async runTestsWithoutBuilding(request: vscode.TestRunRequest, token: vscode.CancellationToken) {
+    const queue = this.prepareQueueForRun(request);
+    
+    // Filter out invalid test items (like parent folders)
+    const validTests = queue.filter(test => this.isValidTestItem(test));
+    if (validTests.length === 0) {
+      return;
+    }
+
     const run = this.controller.createTestRun(request);
     try {
       const { scheme, destination, xcworkspace } = await this.askTestingConfigurations();
-
-      // todo: add check if project is already built
 
       await this.runTests({
         run: run,
@@ -896,6 +902,14 @@ export class TestingManager {
    * Build the project and run the selected tests
    */
   async buildAndRunTests(request: vscode.TestRunRequest, token: vscode.CancellationToken) {
+    const queue = this.prepareQueueForRun(request);
+    
+    // Filter out invalid test items (like parent folders)
+    const validTests = queue.filter(test => this.isValidTestItem(test));
+    if (validTests.length === 0) {
+      return;
+    }
+
     const { xcworkspace, scheme, configuration, destination } = await this.askTestingConfigurations();
 
     // Ask for test plan
@@ -915,10 +929,9 @@ export class TestingManager {
 
     // Run tests
     const run = this.controller.createTestRun(request);
-    const queue = this.prepareQueueForRun(request);
 
     // Run each test
-    for (const test of queue) {
+    for (const test of validTests) {
       const testContext = this.testItems.get(test);
       if (!testContext) {
         continue;
@@ -948,14 +961,23 @@ export class TestingManager {
     run.end();
   }
 
-  private getTestTarget(testId: string): string {
+  private getTestTarget(testId: string): string | undefined {
     // Extract domain and test type from the test ID
-    // e.g., "DolapLite:RegressionTests:ClassName.methodName" -> "DolapLiteRegressionTests"
     const parts = testId.split(':');
     if (parts.length >= 2) {
-      return `${parts[0]}${parts[1]}`;
+      const [domain, testType] = parts;
+      // For test category (e.g., RegressionTests), construct target name
+      if (domain && testType && testType.endsWith('Tests')) {
+        return `${domain}${testType}`;
+      }
     }
-    return '';
+    return undefined;
+  }
+
+  private isValidTestItem(test: vscode.TestItem): boolean {
+    const parts = test.id.split(':');
+    // Only show buttons for test categories (RegressionTests) and actual test classes/methods
+    return parts.length >= 2 && parts[1].endsWith('Tests');
   }
 
   async runMethodTest(options: {
@@ -973,6 +995,12 @@ export class TestingManager {
     const [domain, testType, classAndMethod] = parts;
     const [className, methodName] = classAndMethod.split('.');
     const testTarget = this.getTestTarget(methodTest.id);
+
+    // Skip if no valid test target
+    if (!testTarget) {
+      run.skipped(methodTest);
+      return;
+    }
 
     // Ask for test plan
     const testPlan = await askTestPlan(this.context);
@@ -1071,6 +1099,12 @@ export class TestingManager {
     const parts = classTest.id.split(':');
     const [domain, testType, className] = parts;
     const testTarget = this.getTestTarget(classTest.id);
+
+    // Skip if no valid test target
+    if (!testTarget) {
+      run.skipped(classTest);
+      return;
+    }
 
     // Ask for test plan
     const testPlan = await askTestPlan(this.context);

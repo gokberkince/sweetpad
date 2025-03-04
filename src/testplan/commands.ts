@@ -68,116 +68,132 @@ async function selectTestConfiguration(configurations: TestPlan['configurations'
   };
 }
 
-export async function runTestsCommand(context: CommandExecution, testPlan: TestPlan) {
-  const { xcworkspace, scheme, configuration, destinationRaw } = await getTestingParameters(context);
-  const configurations = testPlan.configurations;
-  const testPlanName = getTestPlanName(testPlan.path);
+export async function runTestsCommand(context: CommandExecution, testPlan: TestPlan & { testTarget?: string }) {
+  const { xcworkspace, scheme, configuration, destination } = await context.context.testingManager.askTestingConfigurations();
 
-  if (!configurations || configurations.length === 0) {
-    await runTask(context.context, {
-      name: "Run Tests",
-      lock: "sweetpad.build",
-      terminateLocked: true,
-      callback: async (terminal) => {
-        await terminal.execute({
-          command: "xcodebuild",
-          args: [
-            "test",
-            "-workspace", xcworkspace,
-            "-scheme", scheme,
-            "-configuration", configuration,
-            "-destination", destinationRaw,
-            "-testPlan", testPlanName
-          ]
-        });
-      }
+  // Get test plan configurations if available
+  let configurationArg: string[] = [];
+  if (testPlan.configurations && testPlan.configurations.length > 0) {
+    const configItems = [
+      {
+        label: "All Regions",
+        description: "Run tests for all regions",
+        configuration: undefined
+      },
+      ...testPlan.configurations.map(config => ({
+        label: config.name,
+        description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+        configuration: config
+      }))
+    ];
+
+    const selectedConfig = await vscode.window.showQuickPick(configItems, {
+      placeHolder: "Select a configuration or All Regions"
     });
-    return;
+
+    if (!selectedConfig) {
+      return;
+    }
+
+    if (selectedConfig.configuration) {
+      configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+    }
   }
 
-  const { configuration: selectedConfig, isAllRegions } = await selectTestConfiguration(configurations);
+  const destinationRaw = getXcodeBuildDestinationString({ destination });
 
-  if (!selectedConfig && !isAllRegions) return;
+  // Build for testing first
+  await context.context.testingManager.buildForTesting({
+    destination,
+    scheme,
+    xcworkspace,
+  });
 
-  const args = [
-    "test",
-    "-workspace", xcworkspace,
-    "-scheme", scheme,
-    "-configuration", configuration,
-    "-destination", destinationRaw,
-    "-testPlan", testPlanName
-  ];
-
-  if (!isAllRegions && selectedConfig) {
-    args.push("-only-test-configuration", selectedConfig.name);
-  }
-
+  // Run tests
   await runTask(context.context, {
-    name: "Run Tests",
+    name: "sweetpad.testing.runTest",
     lock: "sweetpad.build",
     terminateLocked: true,
     callback: async (terminal) => {
+      const args = [
+        "test-without-building",
+        "-workspace", xcworkspace,
+        "-scheme", scheme,
+        "-destination", destinationRaw,
+        "-testPlan", testPlan.name,
+        ...configurationArg
+      ];
+
+      // Add test target if specified
+      if (testPlan.testTarget) {
+        args.push("-only-testing", testPlan.testTarget);
+      }
+
       await terminal.execute({
         command: "xcodebuild",
         args
       });
-    }
+    },
   });
 }
 
-export async function runTestsWithoutBuildingCommand(context: CommandExecution, testPlan: TestPlan) {
-  const { xcworkspace, scheme, configuration, destinationRaw } = await getTestingParameters(context);
-  const configurations = testPlan.configurations;
-  const testPlanName = getTestPlanName(testPlan.path);
+export async function runTestsWithoutBuildingCommand(context: CommandExecution, testPlan: TestPlan & { testTarget?: string }) {
+  const { xcworkspace, scheme, configuration, destination } = await context.context.testingManager.askTestingConfigurations();
 
-  if (!configurations || configurations.length === 0) {
-    await runTask(context.context, {
-      name: "Run Tests Without Building",
-      lock: "sweetpad.build",
-      terminateLocked: true,
-      callback: async (terminal) => {
-        await terminal.execute({
-          command: "xcodebuild",
-          args: [
-            "test-without-building",
-            "-workspace", xcworkspace,
-            "-scheme", scheme,
-            "-configuration", configuration,
-            "-destination", destinationRaw,
-            "-testPlan", testPlanName
-          ]
-        });
-      }
+  // Get test plan configurations if available
+  let configurationArg: string[] = [];
+  if (testPlan.configurations && testPlan.configurations.length > 0) {
+    const configItems = [
+      {
+        label: "All Regions",
+        description: "Run tests for all regions",
+        configuration: undefined
+      },
+      ...testPlan.configurations.map(config => ({
+        label: config.name,
+        description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+        configuration: config
+      }))
+    ];
+
+    const selectedConfig = await vscode.window.showQuickPick(configItems, {
+      placeHolder: "Select a configuration or All Regions"
     });
-    return;
+
+    if (!selectedConfig) {
+      return;
+    }
+
+    if (selectedConfig.configuration) {
+      configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+    }
   }
 
-  const { configuration: selectedConfig, isAllRegions } = await selectTestConfiguration(configurations);
-
-  if (!selectedConfig && !isAllRegions) return;
-
-  const args = [
-    "test-without-building",
-    "-workspace", xcworkspace,
-    "-scheme", scheme,
-    "-configuration", configuration,
-    "-destination", destinationRaw,
-    "-testPlan", testPlanName
-  ];
-
-  if (!isAllRegions && selectedConfig) {
-    args.push("-only-test-configuration", selectedConfig.name);
-  }
+  const destinationRaw = getXcodeBuildDestinationString({ destination });
 
   await runTask(context.context, {
-    name: "Run Tests Without Building",
+    name: "sweetpad.testing.runTest",
     lock: "sweetpad.build",
     terminateLocked: true,
     callback: async (terminal) => {
+      const args = [
+        "test-without-building",
+        "-workspace", xcworkspace,
+        "-scheme", scheme,
+        "-destination", destinationRaw,
+        "-testPlan", testPlan.name,
+        ...configurationArg
+      ];
+
+      // Add test target if specified
+      if (testPlan.testTarget) {
+        args.push("-only-testing", testPlan.testTarget);
+      }
+
       await terminal.execute({
         command: "xcodebuild",
         args
       });
-    }
+    },
   });
 } 

@@ -62,6 +62,7 @@ import { createXcodeGenWatcher } from "./xcodegen/watcher.js";
 import { TestPlansManager } from "./testplan/manager.js";
 import { TestPlansTreeProvider } from "./testplan/tree.js";
 import { runTestsCommand, runTestsWithoutBuildingCommand } from "./testplan/commands.js";
+import type { TestPlan } from "./testplan/manager.js";
 
 export function activate(context: vscode.ExtensionContext) {
   // Sentry 🚨
@@ -212,8 +213,8 @@ export function activate(context: vscode.ExtensionContext) {
   d(tree("sweetpad.testplan.view", testPlansTreeProvider));
   d(command("sweetpad.testplan.refreshView", async () => testPlansManager.refresh()));
   d(command("sweetpad.testplan.select", async (context: CommandExecution, testPlan: TestPlan) => testPlansManager.setSelectedTestPlan(testPlan)));
-  d(command("sweetpad.testplan.runTests", async (context: CommandExecution, item: { testPlan: any }) => runTestsCommand(context, item.testPlan)));
-  d(command("sweetpad.testplan.runTestsWithoutBuilding", async (context: CommandExecution, item: { testPlan: any }) => runTestsWithoutBuildingCommand(context, item.testPlan)));
+  d(command("sweetpad.testplan.runTests", async (context: CommandExecution, item: { testPlan: TestPlan & { testTarget?: string } }) => runTestsCommand(context, item.testPlan)));
+  d(command("sweetpad.testplan.runTestsWithoutBuilding", async (context: CommandExecution, item: { testPlan: TestPlan & { testTarget?: string } }) => runTestsWithoutBuildingCommand(context, item.testPlan)));
 }
 
 export function deactivate() {}

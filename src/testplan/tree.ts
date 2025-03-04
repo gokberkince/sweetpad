@@ -29,17 +29,42 @@ class TestPlanItem extends vscode.TreeItem {
   constructor(
     public readonly testPlan: TestPlan,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    private readonly isSelected: boolean
+    private readonly isSelected: boolean,
+    private readonly parentType: TestPlanType
   ) {
     super(testPlan.name, collapsibleState);
     this.contextValue = "testPlan";
     this.iconPath = new vscode.ThemeIcon(isSelected ? "check" : "file-text");
     this.description = isSelected ? "(selected)" : undefined;
-    this.command = {
-      command: "sweetpad.testplan.select",
-      title: "Select Test Plan",
-      arguments: [testPlan]
-    };
+
+    // Only show run commands for test classes and methods
+    if (testPlan.name.includes("Tests")) {
+      const testTarget = this.getTestTarget(testPlan.name, parentType);
+      this.command = {
+        command: "sweetpad.testplan.select",
+        title: "Select Test Plan",
+        arguments: [{ ...testPlan, testTarget }]
+      };
+    }
+  }
+
+  private getTestTarget(testPlanName: string, type: TestPlanType): string {
+    // Extract the module name (e.g., "MSearch" from "MSearchRegressionTests")
+    const moduleName = testPlanName.replace(/(?:Smoke|Regression|Snapshot|Unit)Tests$/, "");
+    
+    // Construct the target name based on the type
+    switch (type) {
+      case "smoke":
+        return `${moduleName}SmokeTests`;
+      case "regression":
+        return `${moduleName}RegressionTests`;
+      case "snapshot":
+        return `${moduleName}SnapshotTests`;
+      case "unit":
+        return `${moduleName}UnitTests`;
+      default:
+        return testPlanName;
+    }
   }
 }
 
@@ -77,7 +102,8 @@ export class TestPlansTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         .map(plan => new TestPlanItem(
           plan, 
           vscode.TreeItemCollapsibleState.None,
-          selectedTestPlan?.path === plan.path
+          selectedTestPlan?.path === plan.path,
+          element.type
         ));
     }
 
