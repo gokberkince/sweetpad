@@ -10,6 +10,15 @@ const ATTACH_CONFIG: vscode.DebugConfiguration = {
   preLaunchTask: "sweetpad: launch",
 };
 
+const UITEST_ATTACH_CONFIG: vscode.DebugConfiguration = {
+  type: "sweetpad-lldb",
+  request: "attach",
+  name: "Attach to UITest Runner (SweetPad)",
+  processName: "-Runner",
+  stopOnEntry: true,
+  sourceMap: {}
+};
+
 class DebuggerConfigurationProvider implements vscode.DebugConfigurationProvider {
   context: ExtensionContext;
   constructor(options: { context: ExtensionContext }) {
@@ -20,7 +29,7 @@ class DebuggerConfigurationProvider implements vscode.DebugConfigurationProvider
     folder: vscode.WorkspaceFolder | undefined,
     token?: vscode.CancellationToken | undefined,
   ): Promise<vscode.DebugConfiguration[]> {
-    return [ATTACH_CONFIG];
+    return [ATTACH_CONFIG, UITEST_ATTACH_CONFIG];
   }
 
   async resolveDebugConfiguration(
@@ -39,6 +48,45 @@ class DebuggerConfigurationProvider implements vscode.DebugConfigurationProvider
     config: vscode.DebugConfiguration,
     token?: vscode.CancellationToken | undefined,
   ): Promise<vscode.DebugConfiguration> {
+    // Handle UITest runner process
+    if (config.processName?.endsWith("-Runner")) {
+      const { exec } = await import("../common/exec.js");
+      const testingManager = this.context.testingManager;
+      const currentTestId = testingManager.getCurrentTestId();
+      
+      if (!currentTestId) {
+        commonLogger.log("No test is currently running");
+        return config;
+      }
+
+      const testTarget = testingManager.getTestTarget(currentTestId);
+      if (!testTarget) {
+        commonLogger.log("Could not determine test target");
+        return config;
+      }
+
+      // Find the UITest runner process
+      const output = await exec({
+        command: "ps",
+        args: ["aux"]
+      });
+
+      const runnerPattern = `${testTarget}-Runner`;
+      const runnerProcess = output.split("\n").find((line: string) => line.includes(runnerPattern));
+      
+      if (runnerProcess) {
+        const pid = runnerProcess.split(/\s+/)[1];
+        config.type = "lldb";
+        config.pid = pid;
+        commonLogger.log("Found UITest runner process", { pid });
+      } else {
+        commonLogger.log("UITest runner process not found, will wait for it to start");
+      }
+
+      return config;
+    }
+
+    // Handle normal app processes
     const launchContext = this.context.getWorkspaceState("build.lastLaunchedApp");
     if (!launchContext) {
       throw new Error("No last launched app found, please launch the app first using the SweetPad extension");
@@ -82,7 +130,7 @@ class DebuggerConfigurationProvider implements vscode.DebugConfigurationProvider
 
       // LLDB commands executed just before launching of attaching to the debuggee.
       config.preRunCommands = [
-        // Adjusts the loaded module’s file specification to point to the actual location of the binary on the remote device.
+        // Adjusts the loaded module's file specification to point to the actual location of the binary on the remote device.
         // This ensures symbol resolution and breakpoints align correctly with the actual remote binary.
         `script lldb.target.module[0].SetPlatformFileSpec(lldb.SBFileSpec('${deviceAppPath}'))`,
       ];

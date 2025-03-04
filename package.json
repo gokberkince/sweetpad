@@ -195,15 +195,28 @@
     "debuggers": [
       {
         "type": "sweetpad-lldb",
-        "label": "Sweetpad (LLDB)",
+        "label": "SweetPad LLDB",
         "configurationSnippets": [
           {
-            "label": "Sweetpad: Attach to running app",
+            "label": "SweetPad: Attach to running app",
+            "description": "Attach to a running app on device or simulator",
             "body": {
               "type": "sweetpad-lldb",
               "request": "attach",
               "name": "Attach to running app (SweetPad)",
               "preLaunchTask": "sweetpad: launch"
+            }
+          },
+          {
+            "label": "SweetPad: Attach to UITest Runner",
+            "description": "Attach to a running UITest Runner process",
+            "body": {
+              "type": "sweetpad-lldb",
+              "request": "attach",
+              "name": "Attach to UITest Runner (SweetPad)",
+              "processName": "-Runner",
+              "stopOnEntry": true,
+              "sourceMap": {}
             }
           }
         ],
@@ -213,6 +226,22 @@
             "required": [],
             "type": "object",
             "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the program to debug"
+              },
+              "processName": {
+                "type": "string",
+                "description": "Name of the process to attach to"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop debugger on program entry"
+              },
+              "sourceMap": {
+                "type": "object",
+                "description": "Source map configuration"
+              },
               "codelldbAttributes": {
                 "title": "CodeLLDB attributes",
                 "description": "Attributes to pass to CodeLLDB. See: https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md",

@@ -143,8 +143,9 @@ type TestItemContext = {
 };
 
 export class TestingManager {
-  controller: vscode.TestController;
+  readonly controller: vscode.TestController;
   private _context: ExtensionContext | undefined;
+  private _currentTestId: string | undefined;
 
   // Inline error messages, usually is between "passed" and "failed" lines. Seems like only macOS apps have this line.
   // Example output:
@@ -210,13 +211,17 @@ export class TestingManager {
 
     // Discover UI tests in UITests folder
         // Discover UI tests in UITests folder with notification
-        void vscode.window.withProgress({
-          location: vscode.ProgressLocation.Notification,
-          title: "Discovering UI Tests",
-          cancellable: false
-        }, async () => {
-          await this.discoverUITests();
-        })
+        Promise.resolve().then(async () => {
+          await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Discovering UI Tests",
+            cancellable: false
+          }, async () => {
+            await this.discoverUITests();
+          });
+        }).catch(error => {
+          console.error('Failed to discover UI tests:', error);
+        });
   }
 
   private async discoverUITests() {
@@ -832,53 +837,63 @@ export class TestingManager {
     const { xcworkspace, scheme, token, run, request } = options;
 
     const queue = this.prepareQueueForRun(request);
+    
+    // Store the first test's ID if available
+    if (queue.length > 0) {
+      this.setCurrentTestId(queue[0].id);
+    }
 
     await this.resolveSPMTestingTarget({
       queue: queue,
       xcworkspace: xcworkspace,
     });
 
-    commonLogger.debug("Running tests", {
-      scheme: scheme,
-      xcworkspace: xcworkspace,
-      tests: queue.map((test) => test.id),
-    });
-
-    for (const test of queue) {
-      commonLogger.debug("Running single test from queue", {
-        testId: test.id,
-        testLabel: test.label,
-      });
-
-      if (token.isCancellationRequested) {
-        run.skipped(test);
-        continue;
-      }
-
-      const defaultTarget = await askTestingTarget(this.context, {
+    try {
+      commonLogger.debug("Running tests", {
+        scheme: scheme,
         xcworkspace: xcworkspace,
-        title: "Select a target to run tests",
+        tests: queue.map((test) => test.id),
       });
 
-      if (test.id.includes(".")) {
-        await this.runMethodTest({
-          run: run,
-          methodTest: test,
-          xcworkspace: xcworkspace,
-          destination: options.destination,
-          scheme: scheme,
-          defaultTarget: defaultTarget,
+      for (const test of queue) {
+        commonLogger.debug("Running single test from queue", {
+          testId: test.id,
+          testLabel: test.label,
         });
-      } else {
-        await this.runClassTest({
-          run: run,
-          classTest: test,
-          scheme: scheme,
+
+        if (token.isCancellationRequested) {
+          run.skipped(test);
+          continue;
+        }
+
+        const defaultTarget = await askTestingTarget(this.context, {
           xcworkspace: xcworkspace,
-          destination: options.destination,
-          defaultTarget: defaultTarget,
+          title: "Select a target to run tests",
         });
+
+        if (test.id.includes(".")) {
+          await this.runMethodTest({
+            run: run,
+            methodTest: test,
+            xcworkspace: xcworkspace,
+            destination: options.destination,
+            scheme: scheme,
+            defaultTarget: defaultTarget,
+          });
+        } else {
+          await this.runClassTest({
+            run: run,
+            classTest: test,
+            scheme: scheme,
+            xcworkspace: xcworkspace,
+            destination: options.destination,
+            defaultTarget: defaultTarget,
+          });
+        }
       }
+    } finally {
+      // Clear the current test ID after tests are run
+      this.setCurrentTestId(undefined);
     }
   }
 
@@ -895,6 +910,11 @@ export class TestingManager {
       return;
     }
 
+    // Store the first test's ID if available
+    if (validTests.length > 0) {
+      this.setCurrentTestId(validTests[0].id);
+    }
+
     const run = this.controller.createTestRun(request);
     try {
       const { scheme, destination, xcworkspace } = await this.askTestingConfigurations();
@@ -908,6 +928,8 @@ export class TestingManager {
         token: token,
       });
     } finally {
+      // Clear the current test ID
+      this.setCurrentTestId(undefined);
       run.end();
     }
   }
@@ -975,7 +997,7 @@ export class TestingManager {
     run.end();
   }
 
-  private getTestTarget(testId: string): string | undefined {
+  getTestTarget(testId: string): string | undefined {
     // Extract domain and test type from the test ID
     const parts = testId.split(':');
     if (parts.length >= 2) {
@@ -1004,98 +1026,106 @@ export class TestingManager {
   }): Promise<void> {
     const { run, methodTest, xcworkspace, scheme, destination } = options;
 
-    // Extract class name and method name from the test ID
-    const parts = methodTest.id.split(':');
-    const [domain, testType, classAndMethod] = parts;
-    const [className, methodName] = classAndMethod.split('.');
-    const testTarget = this.getTestTarget(methodTest.id);
+    // Store the current test ID
+    this.setCurrentTestId(methodTest.id);
 
-    // Skip if no valid test target
-    if (!testTarget) {
-      run.skipped(methodTest);
-      return;
-    }
+    try {
+      // Extract class name and method name from the test ID
+      const parts = methodTest.id.split(':');
+      const [domain, testType, classAndMethod] = parts;
+      const [className, methodName] = classAndMethod.split('.');
+      const testTarget = this.getTestTarget(methodTest.id);
 
-    // Ask for test plan
-    const testPlan = await askTestPlan(this.context);
-    if (!testPlan) {
-      run.skipped(methodTest);
-      return;
-    }
-
-    // Get test plan configurations if available
-    let configurationArg: string[] = [];
-    if (testPlan.configurations && testPlan.configurations.length > 0) {
-      const configItems = [
-        {
-          label: "All Regions",
-          description: "Run tests for all regions",
-          configuration: undefined
-        },
-        ...testPlan.configurations.map(config => ({
-          label: config.name,
-          description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
-          configuration: config
-        }))
-      ];
-
-      const selectedConfig = await vscode.window.showQuickPick(configItems, {
-        placeHolder: "Select a configuration or All Regions"
-      });
-
-      if (!selectedConfig) {
+      // Skip if no valid test target
+      if (!testTarget) {
         run.skipped(methodTest);
         return;
       }
 
-      if (selectedConfig.configuration) {
-        configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
-      }
-    }
-
-    const destinationRaw = getXcodeBuildDestinationString({ destination });
-
-    const runContext = new XcodebuildTestRunContext({
-      methodTests: [[methodTest.id, methodTest]],
-    });
-
-    run.started(methodTest);
-
-    try {
-      await runTask(this.context, {
-        name: "sweetpad.testing.runTest",
-        lock: "sweetpad.build",
-        terminateLocked: true,
-        callback: async (terminal) => {
-          await terminal.execute({
-            command: "xcodebuild",
-            args: [
-              "test-without-building",
-              "-workspace", xcworkspace,
-              "-scheme", scheme,
-              "-destination", destinationRaw,
-              "-testPlan", testPlan.name,
-              "-only-testing", `${testTarget}/${className}/${methodName}`,
-              ...configurationArg
-            ],
-            onOutputLine: async (output) => {
-              await this.parseOutputLine({
-                line: output.value,
-                testRun: run,
-                className: className,
-                runContext: runContext,
-              });
-            },
-          });
-        },
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Test failed";
-      run.failed(methodTest, new vscode.TestMessage(errorMessage));
-    } finally {
-      if (!runContext.isMethodTestProcessed(methodTest.id)) {
+      // Ask for test plan
+      const testPlan = await askTestPlan(this.context);
+      if (!testPlan) {
         run.skipped(methodTest);
+        return;
       }
+
+      // Get test plan configurations if available
+      let configurationArg: string[] = [];
+      if (testPlan.configurations && testPlan.configurations.length > 0) {
+        const configItems = [
+          {
+            label: "All Regions",
+            description: "Run tests for all regions",
+            configuration: undefined
+          },
+          ...testPlan.configurations.map(config => ({
+            label: config.name,
+            description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+            configuration: config
+          }))
+        ];
+
+        const selectedConfig = await vscode.window.showQuickPick(configItems, {
+          placeHolder: "Select a configuration or All Regions"
+        });
+
+        if (!selectedConfig) {
+          run.skipped(methodTest);
+          return;
+        }
+
+        if (selectedConfig.configuration) {
+          configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+        }
+      }
+
+      const destinationRaw = getXcodeBuildDestinationString({ destination });
+
+      const runContext = new XcodebuildTestRunContext({
+        methodTests: [[methodTest.id, methodTest]],
+      });
+
+      run.started(methodTest);
+
+      try {
+        await runTask(this.context, {
+          name: "sweetpad.testing.runTest",
+          lock: "sweetpad.build",
+          terminateLocked: true,
+          callback: async (terminal) => {
+            await terminal.execute({
+              command: "xcodebuild",
+              args: [
+                "test-without-building",
+                "-workspace", xcworkspace,
+                "-scheme", scheme,
+                "-destination", destinationRaw,
+                "-testPlan", testPlan.name,
+                "-only-testing", `${testTarget}/${className}/${methodName}`,
+                ...configurationArg
+              ],
+              onOutputLine: async (output) => {
+                await this.parseOutputLine({
+                  line: output.value,
+                  testRun: run,
+                  className: className,
+                  runContext: runContext,
+                });
+              },
+            });
+          },
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Test failed";
+        run.failed(methodTest, new vscode.TestMessage(errorMessage));
+      } finally {
+        if (!runContext.isMethodTestProcessed(methodTest.id)) {
+          run.skipped(methodTest);
+        }
+      }
+    } finally {
+      // Clear the current test ID
+      this.setCurrentTestId(undefined);
     }
   }
 
@@ -1109,122 +1139,138 @@ export class TestingManager {
   }): Promise<void> {
     const { run, classTest, xcworkspace, scheme, destination } = options;
 
-    // Extract class name from the test ID
-    const parts = classTest.id.split(':');
-    const [domain, testType, className] = parts;
-    const testTarget = this.getTestTarget(classTest.id);
+    // Store the current test ID
+    this.setCurrentTestId(classTest.id);
 
-    // Skip if no valid test target
-    if (!testTarget) {
-      run.skipped(classTest);
-      return;
-    }
+    try {
+      // Extract class name from the test ID
+      const parts = classTest.id.split(':');
+      const [domain, testType, className] = parts;
+      const testTarget = this.getTestTarget(classTest.id);
 
-    // Ask for test plan
-    const testPlan = await askTestPlan(this.context);
-    if (!testPlan) {
-      run.skipped(classTest);
-      return;
-    }
-
-    // Get test plan configurations if available
-    let configurationArg: string[] = [];
-    if (testPlan.configurations && testPlan.configurations.length > 0) {
-      const configItems = [
-        {
-          label: "All Regions",
-          description: "Run tests for all regions",
-          configuration: undefined
-        },
-        ...testPlan.configurations.map(config => ({
-          label: config.name,
-          description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
-          configuration: config
-        }))
-      ];
-
-      const selectedConfig = await vscode.window.showQuickPick(configItems, {
-        placeHolder: "Select a configuration or All Regions"
-      });
-
-      if (!selectedConfig) {
+      // Skip if no valid test target
+      if (!testTarget) {
         run.skipped(classTest);
         return;
       }
 
-      if (selectedConfig.configuration) {
-        configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+      // Ask for test plan
+      const testPlan = await askTestPlan(this.context);
+      if (!testPlan) {
+        run.skipped(classTest);
+        return;
       }
-    }
 
-    const destinationRaw = getXcodeBuildDestinationString({ destination });
+      // Get test plan configurations if available
+      let configurationArg: string[] = [];
+      if (testPlan.configurations && testPlan.configurations.length > 0) {
+        const configItems = [
+          {
+            label: "All Regions",
+            description: "Run tests for all regions",
+            configuration: undefined
+          },
+          ...testPlan.configurations.map(config => ({
+            label: config.name,
+            description: `Region: ${config.options.region || "Default"}, Language: ${config.options.language || "Default"}`,
+            configuration: config
+          }))
+        ];
 
-    const methodTests = new Map<string, vscode.TestItem>();
-    if (classTest.children) {
-      for (const [id, test] of classTest.children) {
-        methodTests.set(id, test);
+        const selectedConfig = await vscode.window.showQuickPick(configItems, {
+          placeHolder: "Select a configuration or All Regions"
+        });
+
+        if (!selectedConfig) {
+          run.skipped(classTest);
+          return;
+        }
+
+        if (selectedConfig.configuration) {
+          configurationArg = ["-only-test-configuration", selectedConfig.configuration.name];
+        }
       }
-    }
 
-    const runContext = new XcodebuildTestRunContext({
-      methodTests,
-    });
+      const destinationRaw = getXcodeBuildDestinationString({ destination });
 
-    run.started(classTest);
+      const methodTests = new Map<string, vscode.TestItem>();
+      if (classTest.children) {
+        for (const [id, test] of classTest.children) {
+          methodTests.set(id, test);
+        }
+      }
 
-    try {
-      await runTask(this.context, {
-        name: "sweetpad.testing.runTest",
-        lock: "sweetpad.build",
-        terminateLocked: true,
-        callback: async (terminal) => {
-          await terminal.execute({
-            command: "xcodebuild",
-            args: [
-              "test-without-building",
-              "-workspace", xcworkspace,
-              "-scheme", scheme,
-              "-destination", destinationRaw,
-              "-testPlan", testPlan.name,
-              "-only-testing", `${testTarget}/${className}`,
-              ...configurationArg
-            ],
-            onOutputLine: async (output) => {
-              await this.parseOutputLine({
-                line: output.value,
-                testRun: run,
-                className: className,
-                runContext: runContext,
-              });
-            },
-          });
-        },
+      const runContext = new XcodebuildTestRunContext({
+        methodTests,
       });
-    } catch (error) {
-      console.error("Test class failed due to an error", error);
-      // Handle any errors during test execution
-      const errorMessage = `Test class failed due to an error: ${error instanceof Error ? error.message : "Test failed"}`;
-      run.failed(classTest, new vscode.TestMessage(errorMessage));
 
-      // Mark all unprocessed child tests as failed
-      for (const methodTest of runContext.getUnprocessedMethodTests()) {
-        run.failed(methodTest, new vscode.TestMessage("Test failed due to an error."));
+      run.started(classTest);
+
+      try {
+        await runTask(this.context, {
+          name: "sweetpad.testing.runTest",
+          lock: "sweetpad.build",
+          terminateLocked: true,
+          callback: async (terminal) => {
+            await terminal.execute({
+              command: "xcodebuild",
+              args: [
+                "test-without-building",
+                "-workspace", xcworkspace,
+                "-scheme", scheme,
+                "-destination", destinationRaw,
+                "-testPlan", testPlan.name,
+                "-only-testing", `${testTarget}/${className}`,
+                ...configurationArg
+              ],
+              onOutputLine: async (output) => {
+                await this.parseOutputLine({
+                  line: output.value,
+                  testRun: run,
+                  className: className,
+                  runContext: runContext,
+                });
+              },
+            });
+          },
+        });
+      } catch (error) {
+        console.error("Test class failed due to an error", error);
+        // Handle any errors during test execution
+        const errorMessage = `Test class failed due to an error: ${error instanceof Error ? error.message : "Test failed"}`;
+        run.failed(classTest, new vscode.TestMessage(errorMessage));
+
+        // Mark all unprocessed child tests as failed
+        for (const methodTest of runContext.getUnprocessedMethodTests()) {
+          run.failed(methodTest, new vscode.TestMessage("Test failed due to an error."));
+        }
+      } finally {
+        // Mark any unprocessed tests as skipped
+        for (const methodTest of runContext.getUnprocessedMethodTests()) {
+          run.skipped(methodTest);
+        }
+
+        // Determine the overall status of the test class
+        const overallStatus = runContext.getOverallStatus();
+        if (overallStatus === "failed") {
+          run.failed(classTest, new vscode.TestMessage("One or more tests failed."));
+        } else if (overallStatus === "passed") {
+          run.passed(classTest);
+        } else if (overallStatus === "skipped") {
+          run.skipped(classTest);
+        }
       }
     } finally {
-      // Mark any unprocessed tests as skipped
-      for (const methodTest of runContext.getUnprocessedMethodTests()) {
-        run.skipped(methodTest);
-      }
-
-      // Determine the overall status of the test class
-      const overallStatus = runContext.getOverallStatus();
-      if (overallStatus === "failed") {
-        run.failed(classTest, new vscode.TestMessage("One or more tests failed."));
-      } else if (overallStatus === "passed") {
-        run.passed(classTest);
-      } else if (overallStatus === "skipped") {
-        run.skipped(classTest);
-      }
+      // Clear the current test ID
+      this.setCurrentTestId(undefined);
     }
+  }
+
+  getCurrentTestId(): string | undefined {
+    return this._currentTestId;
+  }
+
+  setCurrentTestId(testId: string | undefined) {
+    this._currentTestId = testId;
   }
 }
