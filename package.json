@@ -526,6 +526,11 @@
         "command": "sweetpad.testplan.runTestsWithoutBuilding",
         "title": "SweetPad.TestPlan: Run tests without building",
         "icon": "$(repo-sync)"
+      },
+      {
+        "command": "sweetpad.testing.refreshCurrentDocument",
+        "title": "Refresh Tests",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -664,12 +669,21 @@
           "group": "context@1"
         },
         {
+          "when": "testId =~ /.*Tests/",
           "command": "sweetpad.testing.buildForTesting",
           "group": "context@2"
         },
         {
+          "when": "testId =~ /.*Tests/",
           "command": "sweetpad.testing.testWithoutBuilding",
           "group": "inline@3"
+        }
+      ],
+      "editor/title": [
+        {
+          "when": "resourceExtname == .swift",
+          "command": "sweetpad.testing.refreshCurrentDocument",
+          "group": "navigation"
         }
       ]
     },

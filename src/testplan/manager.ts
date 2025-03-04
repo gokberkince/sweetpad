@@ -5,7 +5,7 @@ import { ExtensionContext } from "../common/commands";
 import { EventEmitter } from "events";
 import { getWorkspacePath } from "../build/utils";
 
-export type TestPlanType = "smoke" | "regression" | "snapshot" | "unit";
+export type TestPlanType = "smoke" | "regression" | "snapshot" | "unit" | "event";
 export type TestPlanConfiguration = {
   id: string;
   name: string;
@@ -49,6 +49,7 @@ export class TestPlansManager extends EventEmitter {
     if (folderPath.includes("RegressionTestPlans")) return "regression";
     if (folderPath.includes("SnapshotTestPlans")) return "snapshot";
     if (folderPath.includes("UnitTestPlans")) return "unit";
+    if (folderPath.includes("EventTestPlans")) return "event";
     return "unit"; // default
   }
 
@@ -70,7 +71,7 @@ export class TestPlansManager extends EventEmitter {
     if (!fs.existsSync(testPlansPath)) return;
 
     const testPlans: TestPlan[] = [];
-    const testPlanFolders = ["SmokeTestPlans", "RegressionTestPlans", "SnapshotTestPlans", "UnitTestPlans"];
+    const testPlanFolders = ["SmokeTestPlans", "RegressionTestPlans", "SnapshotTestPlans", "UnitTestPlans", "EventTestPlans"];
 
     for (const folder of testPlanFolders) {
       const folderPath = path.join(testPlansPath, folder);

@@ -177,32 +177,46 @@ export class TestingManager {
 
     this.controller = vscode.tests.createTestController("uitests", "Trendyol");
 
-    // // Register event listeners for updating test items when documents change or open
-    // vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
-    // vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
+    // Register editor title button for Swift files
+    vscode.commands.registerCommand('sweetpad.testing.refreshCurrentDocument', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.document.uri.path.endsWith('.swift')) {
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "Refreshing UI Tests",
+          cancellable: false
+        }, async () => {
+          await this.discoverUITests();
+        });
+      }
+    });
 
-    // // Initialize test items for already open documents
-    // for (const document of vscode.workspace.textDocuments) {
-    //   this.updateTestItems(document);
-    // }
+    // Add editor title button
+    vscode.window.registerWebviewViewProvider('sweetpad.testing.editorTitle', {
+      resolveWebviewView: () => {
+        return Promise.resolve();
+      }
+    });
+
+    // Create run profile
+    this.controller.createRunProfile("Run", vscode.TestRunProfileKind.Run, async (request, token) => {
+      await this.buildAndRunTests(request, token);
+    }, true);
+
+    // Create run without building profile
+    this.controller.createRunProfile("Run (without building)", vscode.TestRunProfileKind.Run, async (request, token) => {
+      await this.runTestsWithoutBuilding(request, token);
+    }, false);
 
     // Discover UI tests in UITests folder
-    void this.discoverUITests();
-
-    // Default for profile that is slow due to build step, but should work in most cases
-    this.createRunProfile({
-      name: "Build and Run Tests",
-      kind: vscode.TestRunProfileKind.Run,
-      isDefault: true,
-      run: (request, token) => this.buildAndRunTests(request, token),
-    });
-
-    // Profile for running tests without building, should be faster but you may need to build manually
-    this.createRunProfile({
-      name: "Run Tests Without Building",
-      kind: vscode.TestRunProfileKind.Run,
-      run: (request, token) => this.runTestsWithoutBuilding(request, token),
-    });
+        // Discover UI tests in UITests folder with notification
+        void vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "Discovering UI Tests",
+          cancellable: false
+        }, async () => {
+          await this.discoverUITests();
+        })
   }
 
   private async discoverUITests() {

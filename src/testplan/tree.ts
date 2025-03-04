@@ -21,6 +21,8 @@ class TestPlanTypeItem extends vscode.TreeItem {
         return "Snapshot Tests";
       case "unit":
         return "Unit Tests";
+      case "event":
+        return "Event Tests";
     }
   }
 }
@@ -50,7 +52,7 @@ class TestPlanItem extends vscode.TreeItem {
 
   private getTestTarget(testPlanName: string, type: TestPlanType): string {
     // Extract the module name (e.g., "MSearch" from "MSearchRegressionTests")
-    const moduleName = testPlanName.replace(/(?:Smoke|Regression|Snapshot|Unit)Tests$/, "");
+    const moduleName = testPlanName.replace(/(?:Smoke|Regression|Snapshot|Unit|Event)Tests$/, "");
     
     // Construct the target name based on the type
     switch (type) {
@@ -62,6 +64,8 @@ class TestPlanItem extends vscode.TreeItem {
         return `${moduleName}SnapshotTests`;
       case "unit":
         return `${moduleName}UnitTests`;
+      case "event":
+        return `${moduleName}EventTests`;
       default:
         return testPlanName;
     }
@@ -91,7 +95,8 @@ export class TestPlansTreeProvider implements vscode.TreeDataProvider<vscode.Tre
         new TestPlanTypeItem("smoke", vscode.TreeItemCollapsibleState.Collapsed),
         new TestPlanTypeItem("regression", vscode.TreeItemCollapsibleState.Collapsed),
         new TestPlanTypeItem("snapshot", vscode.TreeItemCollapsibleState.Collapsed),
-        new TestPlanTypeItem("unit", vscode.TreeItemCollapsibleState.Collapsed)
+        new TestPlanTypeItem("unit", vscode.TreeItemCollapsibleState.Collapsed),
+        new TestPlanTypeItem("event", vscode.TreeItemCollapsibleState.Collapsed)
       ];
     }
 
