@@ -35,40 +35,36 @@ class TestPlanItem extends vscode.TreeItem {
     private readonly parentType: TestPlanType
   ) {
     super(testPlan.name, collapsibleState);
-    this.contextValue = "testPlan";
+    
+    // Add test target to the testPlan if it's a test plan
+    const testTarget = this.getTestTarget(testPlan.name, parentType);
+    const planWithTarget = testTarget ? { ...testPlan, testTarget } : testPlan;
+
+    // Set context value for command enablement
+    this.contextValue = testTarget ? "testPlan-runnable" : "testPlan";
+    
+    // Set icon and description
     this.iconPath = new vscode.ThemeIcon(isSelected ? "check" : "file-text");
     this.description = isSelected ? "(selected)" : undefined;
 
-    // Only show run commands for test classes and methods
-    if (testPlan.name.includes("Tests")) {
-      const testTarget = this.getTestTarget(testPlan.name, parentType);
-      this.command = {
-        command: "sweetpad.testplan.select",
-        title: "Select Test Plan",
-        arguments: [{ ...testPlan, testTarget }]
-      };
-    }
+    // Add select command
+    this.command = {
+      command: "sweetpad.testplan.select",
+      title: "Select Test Plan",
+      arguments: [undefined, planWithTarget]
+    };
   }
 
-  private getTestTarget(testPlanName: string, type: TestPlanType): string {
+  private getTestTarget(testPlanName: string, type: TestPlanType): string | undefined {
     // Extract the module name (e.g., "MSearch" from "MSearchRegressionTests")
-    const moduleName = testPlanName.replace(/(?:Smoke|Regression|Snapshot|Unit|Event)Tests$/, "");
-    
-    // Construct the target name based on the type
-    switch (type) {
-      case "smoke":
-        return `${moduleName}SmokeTests`;
-      case "regression":
-        return `${moduleName}RegressionTests`;
-      case "snapshot":
-        return `${moduleName}SnapshotTests`;
-      case "unit":
-        return `${moduleName}UnitTests`;
-      case "event":
-        return `${moduleName}EventTests`;
-      default:
-        return testPlanName;
-    }
+    const match = testPlanName.match(/^(.+?)(Smoke|Regression|Snapshot|Unit|Event)Tests$/);
+    if (!match) return undefined;
+
+    const [, moduleName, testType] = match;
+    if (!moduleName) return undefined;
+
+    // Return the full test target name
+    return `${moduleName}${testType}Tests`;
   }
 }
 
@@ -91,13 +87,11 @@ export class TestPlansTreeProvider implements vscode.TreeDataProvider<vscode.Tre
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!element) {
-      return [
-        new TestPlanTypeItem("smoke", vscode.TreeItemCollapsibleState.Collapsed),
-        new TestPlanTypeItem("regression", vscode.TreeItemCollapsibleState.Collapsed),
-        new TestPlanTypeItem("snapshot", vscode.TreeItemCollapsibleState.Collapsed),
-        new TestPlanTypeItem("unit", vscode.TreeItemCollapsibleState.Collapsed),
-        new TestPlanTypeItem("event", vscode.TreeItemCollapsibleState.Collapsed)
-      ];
+      // Only show types that have test plans
+      const types: TestPlanType[] = ["smoke", "regression", "snapshot", "unit", "event"];
+      return types
+        .filter(type => this.manager.testPlans.some(plan => plan.type === type))
+        .map(type => new TestPlanTypeItem(type, vscode.TreeItemCollapsibleState.Expanded));
     }
 
     if (element instanceof TestPlanTypeItem) {

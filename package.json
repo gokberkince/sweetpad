@@ -683,12 +683,12 @@
         },
         {
           "command": "sweetpad.testplan.runTests",
-          "when": "view == sweetpad.testplan.view && viewItem == testPlan",
+          "when": "view == sweetpad.testplan.view && viewItem == testPlan-runnable",
           "group": "inline"
         },
         {
           "command": "sweetpad.testplan.runTestsWithoutBuilding",
-          "when": "view == sweetpad.testplan.view && viewItem == testPlan",
+          "when": "view == sweetpad.testplan.view && viewItem == testPlan-runnable",
           "group": "inline"
         }
       ],
@@ -710,7 +710,7 @@
       ],
       "editor/title": [
         {
-          "when": "resourceExtname == .swift",
+          "when": "resourceExtname == .swift && sweetpad.testing.isBaseTest",
           "command": "sweetpad.testing.refreshCurrentDocument",
           "group": "navigation"
         }

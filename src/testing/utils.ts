@@ -10,7 +10,7 @@ import { splitSupportedDestinatinos } from "../destination/utils";
 import * as path from "path";
 import { getWorkspacePath } from "../build/utils";
 import { askXcodeWorkspacePath } from "../build/utils";
-import type { TestPlan } from "../testplan/manager";
+import type { TestPlan, TestPlanConfiguration } from "../testplan/manager";
 
 /**
  * Ask user to select target to build
@@ -222,46 +222,52 @@ export async function askSchemeForTesting(
   return schemeName;
 }
 
-export async function askTestPlan(context: ExtensionContext): Promise<TestPlan | undefined> {
-  // First check if there's a test plan selected in the test plan view
-  const testPlansManager = context.testPlansManager;
-  if (!testPlansManager) {
-    return undefined;
+export async function askTestPlan(
+  context: ExtensionContext,
+  options: {
+    title?: string;
+    testPlans: TestPlan[];
   }
-
-  // Get selected test plan if exists
-  const selectedTestPlan = testPlansManager.selectedTestPlan;
-  if (selectedTestPlan) {
-    return selectedTestPlan;
-  }
-
-  // If no test plan is selected, show quick pick with available test plans
-  const testPlans = testPlansManager.testPlans;
-  if (testPlans.length === 0) {
-    // Refresh test plans if none are loaded
-    await testPlansManager.refresh();
-  }
-
-  const items = testPlans.map(testPlan => ({
-    label: testPlan.name,
-    description: `${testPlan.type} - ${testPlan.configurations.length} configurations`,
-    testPlan
-  }));
-
-  const selected = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Select a test plan',
-    title: 'Select Test Plan'
+): Promise<TestPlan | undefined> {
+  const items = options.testPlans.map((plan) => {
+    return {
+      label: plan.name,
+      description: `(${plan.type})- ${plan.configurations.length} configurations`,
+      plan: plan,
+    };
   });
 
-  if (!selected) {
-    // Default to LocalSmokeTests if no selection
-    return {
-      name: "LocalSmokeTests",
-      path: "",
-      type: "smoke",
-      configurations: []
-    };
-  }
+  const selected = await vscode.window.showQuickPick(items, {
+    title: options.title ?? "Select a test plan",
+    placeHolder: "Select a test plan",
+  });
 
-  return selected.testPlan;
+  return selected?.plan;
+}
+
+/**
+ * Ask user to select a test plan configuration
+ */
+export async function askTestPlanConfiguration(
+  context: ExtensionContext,
+  options: {
+    title?: string;
+    configurations: TestPlanConfiguration[];
+  }
+): Promise<TestPlanConfiguration | undefined> {
+  const items = options.configurations.map((config) => {
+    const regionLabel = config.options.region ? ` (${config.options.region})` : '';
+    return {
+      label: config.name,
+      description: regionLabel,
+      config: config,
+    };
+  });
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title: options.title ?? "Select a configuration",
+    placeHolder: "Select a configuration",
+  });
+
+  return selected?.config;
 }
