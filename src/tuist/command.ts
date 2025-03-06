@@ -2,15 +2,17 @@ import * as vscode from "vscode";
 import { restartSwiftLSP } from "../build/utils";
 import { getIsTuistInstalled, tuistClean, tuistEdit, tuistGenerate, tuistInstall } from "../common/cli/scripts";
 import { ExtensionError } from "../common/errors";
+import { CommandExecution } from "../common/commands";
+import { exec } from "../common/exec.js";
 
 async function tuistCheckInstalled() {
-  const isTuistInstalled = await getIsTuistInstalled();
-  if (!isTuistInstalled) {
+  const isInstalled = await getIsTuistInstalled();
+  if (!isInstalled) {
     throw new ExtensionError("Tuist is not installed");
   }
 }
 
-export async function tuistGenerateCommand() {
+export async function tuistGenerateCommand(context: CommandExecution) {
   await tuistCheckInstalled();
 
   const options = await vscode.window.showQuickPick([
@@ -22,37 +24,96 @@ export async function tuistGenerateCommand() {
 
   if (!options) return;
 
-  const raw = await tuistGenerate(options.value);
-  if (raw.includes("tuist install")) {
-    vscode.window.showErrorMessage(`Please run "tuist install" first`);
-    return;
-  }
+  return vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: "Tuist: Generating Xcode project...",
+    cancellable: false
+  }, async (progress) => {
+    try {
+      const args = ["generate", "--no-open"];
+      if (options.value) {
+        args.push("--no-cache");
+      }
+      
+      await exec({
+        command: "tuist",
+        args: args
+      });
 
-  await restartSwiftLSP();
-
-  vscode.window.showInformationMessage("The Xcode project was successfully generated using Tuist.");
+      await restartSwiftLSP();
+      vscode.window.showInformationMessage("Tuist: Project generated successfully");
+    } catch (err: any) {
+      if (err?.toString().includes("tuist install")) {
+        vscode.window.showErrorMessage(`Please run "tuist install" first`);
+      } else {
+        vscode.window.showErrorMessage(`Tuist: Failed to generate project - ${err}`);
+      }
+      throw err;
+    }
+  });
 }
 
-export async function tuistInstallCommand() {
+export async function tuistInstallCommand(context: CommandExecution) {
   await tuistCheckInstalled();
 
-  await tuistInstall();
-
-  await restartSwiftLSP();
-
-  vscode.window.showInformationMessage("The Swift Package was successfully installed using Tuist.");
+  return vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: "Tuist: Installing dependencies...",
+    cancellable: false
+  }, async (progress) => {
+    try {
+      await exec({
+        command: "tuist",
+        args: ["install"]
+      });
+      
+      await restartSwiftLSP();
+      vscode.window.showInformationMessage("Tuist: Dependencies installed successfully");
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Tuist: Failed to install dependencies - ${err}`);
+      throw err;
+    }
+  });
 }
 
-export async function tuistCleanCommand() {
+export async function tuistCleanCommand(context: CommandExecution) {
   await tuistCheckInstalled();
 
-  await tuistClean();
-
-  vscode.window.showInformationMessage("Tuist cleaned.");
+  return vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: "Tuist: Cleaning project...",
+    cancellable: false
+  }, async (progress) => {
+    try {
+      await exec({
+        command: "tuist",
+        args: ["clean"]
+      });
+      vscode.window.showInformationMessage("Tuist: Project cleaned successfully");
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Tuist: Failed to clean project - ${err}`);
+      throw err;
+    }
+  });
 }
 
-export async function tuistEditComnmand() {
+export async function tuistEditComnmand(context: CommandExecution) {
   await tuistCheckInstalled();
 
-  await tuistEdit();
+  return vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: "Tuist: Opening manifest editor...",
+    cancellable: false
+  }, async (progress) => {
+    try {
+      await exec({
+        command: "tuist",
+        args: ["edit"]
+      });
+      vscode.window.showInformationMessage("Tuist: Manifest editor opened successfully");
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Tuist: Failed to open manifest editor - ${err}`);
+      throw err;
+    }
+  });
 }
