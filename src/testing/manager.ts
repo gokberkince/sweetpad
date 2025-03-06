@@ -1046,11 +1046,6 @@ export class TestingManager {
           continue;
         }
 
-        const defaultTarget = await askTestingTarget(this.context, {
-          xcworkspace: xcworkspace,
-          title: "Select a target to run tests",
-        });
-
         if (test.id.includes(".")) {
           await this.runMethodTest({
             run: run,
@@ -1058,7 +1053,7 @@ export class TestingManager {
             xcworkspace: xcworkspace,
             destination: destination,
             scheme: scheme,
-            defaultTarget: defaultTarget,
+            defaultTarget: null,
             command: command,
             testConfiguration: testConfiguration
           });
@@ -1069,7 +1064,7 @@ export class TestingManager {
             scheme: scheme,
             xcworkspace: xcworkspace,
             destination: destination,
-            defaultTarget: defaultTarget,
+            defaultTarget: null,
             command: command,
             testConfiguration: testConfiguration
           });
