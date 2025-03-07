@@ -32,7 +32,7 @@ export async function tuistGenerateCommand(context: CommandExecution) {
     try {
       const args = ["generate", "--no-open"];
       if (options.value) {
-        args.push("--no-cache");
+        args.push("--no-binary-cache");
       }
       
       await exec({
