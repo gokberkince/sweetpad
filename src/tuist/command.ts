@@ -4,6 +4,7 @@ import { getIsTuistInstalled, tuistClean, tuistEdit, tuistGenerate, tuistInstall
 import { ExtensionError } from "../common/errors";
 import { CommandExecution } from "../common/commands";
 import { exec } from "../common/exec.js";
+import { getWorkspaceConfig } from "../common/config.js";
 
 async function tuistCheckInstalled() {
   const isInstalled = await getIsTuistInstalled();
@@ -35,9 +36,16 @@ export async function tuistGenerateCommand(context: CommandExecution) {
         args.push("--no-binary-cache");
       }
       
+      // Check if tuist.allXcodes is enabled
+      const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+      
+      // Always explicitly set the environment variable
+      const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+      
       await exec({
         command: "tuist",
-        args: args
+        args: args,
+        env: env
       });
 
       await restartSwiftLSP();
@@ -62,9 +70,16 @@ export async function tuistInstallCommand(context: CommandExecution) {
     cancellable: false
   }, async (progress) => {
     try {
+      // Check if tuist.allXcodes is enabled
+      const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+      
+      // Always explicitly set the environment variable
+      const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+      
       await exec({
         command: "tuist",
-        args: ["install"]
+        args: ["install"],
+        env: env
       });
       
       await restartSwiftLSP();
@@ -85,9 +100,16 @@ export async function tuistCleanCommand(context: CommandExecution) {
     cancellable: false
   }, async (progress) => {
     try {
+      // Check if tuist.allXcodes is enabled
+      const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+      
+      // Always explicitly set the environment variable
+      const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+      
       await exec({
         command: "tuist",
-        args: ["clean"]
+        args: ["clean"],
+        env: env
       });
       vscode.window.showInformationMessage("Tuist: Project cleaned successfully");
     } catch (err: any) {
@@ -106,9 +128,16 @@ export async function tuistEditComnmand(context: CommandExecution) {
     cancellable: false
   }, async (progress) => {
     try {
+      // Check if tuist.allXcodes is enabled
+      const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+      
+      // Always explicitly set the environment variable
+      const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+      
       await exec({
         command: "tuist",
-        args: ["edit"]
+        args: ["edit"],
+        env: env
       });
       vscode.window.showInformationMessage("Tuist: Manifest editor opened successfully");
     } catch (err: any) {

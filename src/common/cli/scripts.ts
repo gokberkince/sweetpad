@@ -7,6 +7,7 @@ import { exec } from "../exec";
 import { uniqueFilter } from "../helpers";
 import { commonLogger } from "../logger";
 import { XcodeWorkspace } from "../xcode/workspace";
+import { getWorkspaceConfig } from "../config.js";
 
 export type SimulatorOutput = {
   dataPath: string;
@@ -391,30 +392,59 @@ export async function tuistGenerate(noBinaryCache: boolean = false) {
   if (noBinaryCache) {
     args.push("--no-binary-cache");
   }
+  
+  // Check if tuist.allXcodes is enabled
+  const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+  
+  // Always explicitly set the environment variable
+  const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+  
   return await exec({
     command: "tuist",
     args: args,
+    env: env
   });
 }
 
 export async function tuistClean() {
-  await exec({
+  // Check if tuist.allXcodes is enabled
+  const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+  
+  // Always explicitly set the environment variable
+  const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+  
+  return await exec({
     command: "tuist",
     args: ["clean"],
+    env: env
   });
 }
 
 export async function tuistInstall() {
-  await exec({
+  // Check if tuist.allXcodes is enabled
+  const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+  
+  // Always explicitly set the environment variable
+  const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+  
+  return await exec({
     command: "tuist",
     args: ["install"],
+    env: env
   });
 }
 
 export async function tuistEdit() {
-  await exec({
+  // Check if tuist.allXcodes is enabled
+  const useAllXcodes = getWorkspaceConfig("tuist.allXcodes") ?? false;
+  
+  // Always explicitly set the environment variable
+  const env = { TUIST_ALL_XCODES: useAllXcodes ? "YES" : "NO" };
+  
+  return await exec({
     command: "tuist",
     args: ["edit"],
+    env: env
   });
 }
 

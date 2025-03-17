@@ -19,6 +19,7 @@ type Config = {
   "xcodegen.autogenerate": boolean;
   "xcodebuildserver.autogenerate": boolean;
   "tuist.autogenerate": boolean;
+  "tuist.allXcodes": boolean;
   "testing.configuration": string;
 };
 

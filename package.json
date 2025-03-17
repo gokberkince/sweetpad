@@ -3,7 +3,7 @@
   "type": "commonjs",
   "displayName": "SweetPad (iOS/Swift development)",
   "description": "Develop Swift/iOS projects in VS Code",
-  "version": "0.1.56",
+  "version": "0.2.1",
   "publisher": "sweetpad",
   "icon": "images/logo.png",
   "license": "MIT",
@@ -862,6 +862,11 @@
           "type": "boolean",
           "default": false,
           "description": "Watch for new .swift files and regenerate the project using Tuist. Restart VSCode to apply the settings."
+        },
+        "sweetpad.tuist.allXcodes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Prepend TUIST_ALL_XCODES=YES to tuist commands. This enables Tuist to work with all available Xcode versions."
         },
         "sweetpad.xcodebuildserver.autogenerate": {
           "type": "boolean",

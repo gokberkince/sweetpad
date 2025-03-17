@@ -25,7 +25,7 @@ type TestingInlineError = {
  */
 class XcodebuildTestRunContext {
   private processedMethodTests = new Set<string>();
-  private failedMethodTests = new Set<string>();
+  protected failedMethodTests = new Set<string>();
   private inlineErrorMap = new Map<string, TestingInlineError>();
   private methodTests: Map<string, vscode.TestItem>;
 
@@ -84,6 +84,10 @@ class XcodebuildTestRunContext {
 
   findTestIdByMethodName(methodName: string): string | undefined {
     return this.getTestIds().find(id => id.endsWith(`.${methodName}`));
+  }
+
+  hasFailedMethodTest(methodTestId: string): boolean {
+    return this.failedMethodTests.has(methodTestId);
   }
 }
 
@@ -228,29 +232,30 @@ export class TestingManager {
     });
 
     // Register document listeners
-    const documentAddRemoveListener = vscode.workspace.onDidChangeTextDocument(async event => {
+    const documentAddRemoveListener = vscode.workspace.onDidSaveTextDocument(async document => {
       // Only process Swift files
-      if (!event.document.uri.path.endsWith('.swift')) {
+      if (!document.uri.path.endsWith('.swift')) {
         return;
       }
       
-      // Update context for the changed document
-      await this.updateBaseTestContext(event.document);
+      // Update context for the saved document
+      await this.updateBaseTestContext(document);
       
       // Check if the file contains any BaseTest classes
-      const hasBaseTest = await this.hasBaseTestClass(event.document);
+      const hasBaseTest = await this.hasBaseTestClass(document);
       if (!hasBaseTest) {
         return;
       }
       
-      // Debounce document changes to avoid excessive updates
+      // Since we're only running on save, we don't need debouncing anymore
+      // but we'll keep it just in case multiple save events happen in quick succession
       if (this.documentChangeDebounceTimer) {
         clearTimeout(this.documentChangeDebounceTimer);
       }
       
       this.documentChangeDebounceTimer = setTimeout(() => {
         this.discoverUITests();
-      }, 1000); // 1 second debounce
+      }, 100); // Reduced debounce time since saves are less frequent than changes
     });
     
     // Watch for file system changes (creation/deletion of Swift files)
@@ -716,14 +721,29 @@ export class TestingManager {
    * Execute separate command to build the project before running tests
    */
   async buildForTestingCommand() {
-    const { scheme, destination, xcworkspace } = await this.askTestingConfigurations();
+    // For direct build calls, we don't need test plans or configurations
+    // Just get the basic build settings
+    const xcworkspace = await askXcodeWorkspacePath(this.context);
+    const scheme = await askSchemeForTesting(this.context, {
+      xcworkspace: xcworkspace,
+      title: "Select a scheme to build",
+    });
 
-    // before testing we need to build the project to avoid runnning tests on old code or
-    // building every time we run selected tests
+    const buildSettings = await getBuildSettingsOptional({
+      scheme: scheme,
+      configuration: "Debug", // Use Debug as default for building
+      sdk: undefined,
+      xcworkspace: xcworkspace,
+    });
+
+    const destination = await askDestinationToTestOn(this.context, buildSettings);
+
+    // Call buildForTesting with isDirectBuild flag
     await this.buildForTesting({
       destination: destination,
       scheme: scheme,
       xcworkspace: xcworkspace,
+      isDirectBuild: true
     });
   }
 
@@ -734,10 +754,26 @@ export class TestingManager {
     scheme: string;
     destination: Destination;
     xcworkspace: string;
+    isDirectBuild?: boolean;
   }) {
     const destinationRaw = getXcodeBuildDestinationString({ destination: options.destination });
 
-    // todo: add xcodebeautify command to format output
+    // Base arguments for xcodebuild
+    const xcodebuildArgs = [
+      "build-for-testing",
+      "-workspace", options.xcworkspace,
+      "-scheme", options.scheme,
+      "-destination", destinationRaw,
+    ];
+
+    // Add configuration (Debug is default for building)
+    xcodebuildArgs.push("-configuration", "Debug");
+
+    // Add allowProvisioningUpdates only for direct builds
+    // For test-related builds, this will be handled by the test runner
+    if (options.isDirectBuild) {
+      xcodebuildArgs.push("-allowProvisioningUpdates");
+    }
 
     await runTask(this.context, {
       name: "sweetpad.build.build",
@@ -746,16 +782,7 @@ export class TestingManager {
       callback: async (terminal) => {
         await terminal.execute({
           command: "xcodebuild",
-          args: [
-            "build-for-testing",
-            "-destination",
-            destinationRaw,
-            "-allowProvisioningUpdates",
-            "-scheme",
-            options.scheme,
-            "-workspace",
-            options.xcworkspace,
-          ],
+          args: xcodebuildArgs,
         });
       },
     });
@@ -814,6 +841,10 @@ export class TestingManager {
       if (status.startsWith("started")) {
         testRun.started(methodTest);
       } else if (status.startsWith("passed")) {
+        if (runContext.hasFailedMethodTest(methodTestId)) {
+          console.log(`Test ${methodTestId} failed initially but passed on rerun.`);
+          // Optionally, you can add this to a separate set for flaky tests
+        }
         testRun.passed(methodTest);
         runContext.addProcessedMethodTest(methodTestId);
       } else if (status.startsWith("failed")) {
@@ -841,6 +872,10 @@ export class TestingManager {
       if (status.startsWith("started")) {
         testRun.started(methodTest);
       } else if (status.startsWith("passed")) {
+        if (runContext.hasFailedMethodTest(methodTestId)) {
+          console.log(`Test ${methodTestId} failed initially but passed on rerun.`);
+          // Optionally, you can add this to a separate set for flaky tests
+        }
         testRun.passed(methodTest);
         runContext.addProcessedMethodTest(methodTestId);
       } else if (status.startsWith("failed")) {
@@ -1011,9 +1046,10 @@ export class TestingManager {
     scheme: string;
     token: vscode.CancellationToken;
     command?: string;
+    configuration?: string;
     testConfiguration?: string;
   }) {
-    const { xcworkspace, scheme, token, run, request, destination, command, testConfiguration } = options;
+    const { xcworkspace, scheme, token, run, request, destination, command, configuration, testConfiguration } = options;
 
     const queue = this.prepareQueueForRun(request);
     
@@ -1021,6 +1057,11 @@ export class TestingManager {
     const validTests = queue.filter(test => this.isValidTestItem(test));
     if (validTests.length === 0) {
       return;
+    }
+
+    // Store the first test's ID if available (for batch execution)
+    if (validTests.length > 1) {
+      this.setCurrentTestId(validTests[0].id);
     }
 
     await this.resolveSPMTestingTarget({
@@ -1035,39 +1076,185 @@ export class TestingManager {
         tests: queue.map((test) => test.id),
       });
 
-      for (const test of queue) {
-        commonLogger.debug("Running single test from queue", {
-          testId: test.id,
-          testLabel: test.label,
-        });
+      // If only one test is selected, use the specific test runner for better handling
+      if (validTests.length === 1) {
+        const test = validTests[0];
+        const testContext = this.testItems.get(test);
+        
+        if (!testContext) {
+          run.skipped(test);
+          return;
+        }
 
+        if (testContext.type === "method") {
+          await this.runMethodTest({
+            run,
+            methodTest: test,
+            xcworkspace,
+            scheme,
+            destination,
+            defaultTarget: null,
+            configuration,
+            testConfiguration,
+            command
+          });
+        } else if (testContext.type === "class") {
+          await this.runClassTest({
+            run,
+            classTest: test,
+            xcworkspace,
+            scheme,
+            destination,
+            defaultTarget: null,
+            configuration,
+            testConfiguration,
+            command
+          });
+        }
+        return;
+      }
+
+      // Multiple tests selected - use batch execution
+      const allMethodTests = new Map<string, vscode.TestItem>();
+      const testSpecs: string[] = [];
+      
+      for (const test of validTests) {
         if (token.isCancellationRequested) {
           run.skipped(test);
           continue;
         }
 
+        const parts = test.id.split(':');
+        const testTarget = this.getTestTarget(test.id);
+        
+        if (!testTarget) {
+          run.skipped(test);
+          continue;
+        }
+
         if (test.id.includes(".")) {
-          await this.runMethodTest({
-            run: run,
-            methodTest: test,
-            xcworkspace: xcworkspace,
-            destination: destination,
-            scheme: scheme,
-            defaultTarget: null,
-            command: command,
-            testConfiguration: testConfiguration
-          });
+          // Method test
+          const [domain, testType, classAndMethod] = parts;
+          const [className, methodName] = classAndMethod.split('.');
+          testSpecs.push(`${testTarget}/${className}/${methodName}`);
+          allMethodTests.set(test.id, test);
+          run.started(test);
+        } else if (parts.length === 2) {
+          // Test type selected (e.g., "Meal:SmokeTests")
+          testSpecs.push(testTarget);
+          run.started(test);
+          
+          // Add all classes and their methods under this test type
+          if (test.children) {
+            for (const [_, classTest] of test.children) {
+              run.started(classTest);
+              if (classTest.children) {
+                for (const [id, methodTest] of classTest.children) {
+                  allMethodTests.set(id, methodTest);
+                  run.started(methodTest);
+                }
+              }
+            }
+          }
         } else {
-          await this.runClassTest({
-            run: run,
-            classTest: test,
-            scheme: scheme,
-            xcworkspace: xcworkspace,
-            destination: destination,
-            defaultTarget: null,
-            command: command,
-            testConfiguration: testConfiguration
-          });
+          // Class test
+          const [domain, testType, className] = parts;
+          testSpecs.push(`${testTarget}/${className}`);
+          run.started(test);
+          
+          // Add all method tests from the class
+          if (test.children) {
+            for (const [id, methodTest] of test.children) {
+              allMethodTests.set(id, methodTest);
+              run.started(methodTest);
+            }
+          }
+        }
+      }
+
+      // Get destination string
+      const destinationRaw = getXcodeBuildDestinationString({ destination });
+      
+      // Base command arguments
+      const xcodebuildArgs = [
+        command || "test", // Respect provided command (test/test-without-building)
+        "-workspace", xcworkspace,
+        "-scheme", scheme,
+        "-destination", destinationRaw,
+      ];
+      
+      // Add configuration (use provided or default to Debug)
+      xcodebuildArgs.push("-configuration", configuration || "Debug");
+
+      // Add allowProvisioningUpdates for build-related commands
+      if (command?.includes("build")) {
+        xcodebuildArgs.push("-allowProvisioningUpdates");
+      }
+      
+      // Use the selected test plan from TestPlansManager
+      const testPlan = this.context?.testPlansManager?.selectedTestPlan;
+      if (testPlan) {
+        xcodebuildArgs.push("-testPlan", testPlan.name);
+        
+        // Add test configuration only if a specific one is selected
+        if (testPlan.configurations && testPlan.configurations.length > 0) {
+          // Check if a specific configuration was selected
+          const selectedConfig = testPlan.configurations.find(config => 
+            testConfiguration && config.name === testConfiguration
+          );
+          
+          if (selectedConfig) {
+            xcodebuildArgs.push("-only-test-configuration", selectedConfig.name);
+          }
+        }
+      }
+      
+      // Add all test specifications
+      for (const testSpec of testSpecs) {
+        xcodebuildArgs.push("-only-testing", testSpec);
+      }
+
+      const runContext = new XcodebuildTestRunContext({
+        methodTests: allMethodTests,
+      });
+
+      try {
+        await runTask(this.context, {
+          name: "sweetpad.testing.runTest",
+          lock: "sweetpad.build",
+          terminateLocked: true,
+          callback: async (terminal) => {
+            await terminal.execute({
+              command: "xcodebuild",
+              args: xcodebuildArgs,
+              onOutputLine: async (output) => {
+                await this.parseOutputLine({
+                  line: output.value,
+                  testRun: run,
+                  className: "", // Not needed when running multiple tests
+                  runContext: runContext,
+                });
+              },
+            });
+          },
+        });
+      } catch (error) {
+        console.error("Tests failed due to an error", error);
+        // Handle any errors during test execution
+        const errorMessage = `Tests failed due to an error: ${error instanceof Error ? error.message : "Tests failed"}`;
+        
+        // Mark all unprocessed tests as failed
+        for (const test of validTests) {
+          if (!runContext.isMethodTestProcessed(test.id)) {
+            run.failed(test, new vscode.TestMessage(errorMessage));
+          }
+        }
+      } finally {
+        // Mark any unprocessed tests as skipped
+        for (const [id, test] of allMethodTests) {
+          if (!runContext.isMethodTestProcessed(id)) {
+            run.skipped(test);
+          }
         }
       }
     } finally {
@@ -1130,13 +1317,12 @@ export class TestingManager {
     const { xcworkspace, scheme, configuration, testConfiguration, destination } = await this.askTestingConfigurations();
     // Test plan is already selected in askTestingConfigurations
 
-    const destinationRaw = getXcodeBuildDestinationString({ destination });
-
-    // Build for testing first
+    // Build for testing first (without isDirectBuild flag since this is part of test execution)
     await this.buildForTesting({
       destination,
       scheme,
       xcworkspace,
+      isDirectBuild: false
     });
 
     // Run tests
@@ -1186,6 +1372,14 @@ export class TestingManager {
       const [domain, testType] = parts;
       // For test category (e.g., RegressionTests), construct target name
       if (domain && testType && testType.endsWith('Tests')) {
+        // If we have exactly 2 parts, it means we selected the test type itself
+        // Example: "Meal:SmokeTests" -> "MealSmokeTests"
+        if (parts.length === 2) {
+          return `${domain}${testType}`;
+        }
+        // For class or method tests, still return the same target
+        // Example: "Meal:SmokeTests:TestClass" -> "MealSmokeTests"
+        // Example: "Meal:SmokeTests:TestClass.testMethod" -> "MealSmokeTests"
         return `${domain}${testType}`;
       }
     }
@@ -1194,7 +1388,10 @@ export class TestingManager {
 
   private isValidTestItem(test: vscode.TestItem): boolean {
     const parts = test.id.split(':');
-    // Only show buttons for test categories (RegressionTests) and actual test classes/methods
+    // Show buttons for:
+    // - Test types (e.g., Meal:SmokeTests)
+    // - Test classes (e.g., Meal:SmokeTests:TestClass)
+    // - Test methods (e.g., Meal:SmokeTests:TestClass.testMethod)
     return parts.length >= 2 && parts[1].endsWith('Tests');
   }
 
